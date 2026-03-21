@@ -10,6 +10,12 @@ from textual.widgets import Footer, Header
 from textual.widgets import DirectoryTree
 from textual.widgets import Input
 from textual.widgets import RichLog
+from textual.widgets import Tabs, Tab
+
+TABS = [
+    "Files",
+    "About"
+]
 
 class LeftWidget1(Placeholder):
     def __init__(self):
@@ -33,6 +39,10 @@ class EtuiApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Tabs(
+            Tab(TABS[0],id="tab-0"),
+            Tab(TABS[1],id="tab-1"),
+        )
         with Horizontal():
             with Vertical():
                 yield LeftWidget()
