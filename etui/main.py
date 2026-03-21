@@ -4,6 +4,7 @@
 
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header
+from textual.widgets import DirectoryTree
 
 class EtuiApp(App):
     """ Embedded TUI App"""
@@ -11,6 +12,7 @@ class EtuiApp(App):
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
         yield Header()
+        yield DirectoryTree("./")
         yield Footer()
 
 def main():
