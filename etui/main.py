@@ -3,16 +3,36 @@
 
 
 from textual.app import App, ComposeResult
+from textual.containers import Horizontal
+from textual.containers import Vertical
+from textual.widgets import Placeholder
 from textual.widgets import Footer, Header
 from textual.widgets import DirectoryTree
+from textual.widgets import Input
+
+class LeftWidget1(Placeholder):
+    def __init__(self):
+        super().__init__()
+
+class LeftWidget(DirectoryTree):
+    def __init__(self):
+        super().__init__("./")
+
+class RightWidget(Placeholder):
+    def __init__(self):
+        super().__init__()
 
 class EtuiApp(App):
     """ Embedded TUI App"""
 
     def compose(self) -> ComposeResult:
-        """Create child widgets for the app."""
         yield Header()
-        yield DirectoryTree("./")
+        with Horizontal():
+            with Vertical():
+                yield LeftWidget()
+            with Vertical():
+                yield RightWidget()
+        yield Input()
         yield Footer()
 
 def main():
