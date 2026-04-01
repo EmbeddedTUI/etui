@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Pawel Wodnicki
 # Copyright (c) 2026 32bitmico LLC
 
+import asyncio
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical
@@ -28,3 +29,17 @@ class ConsoleTab(Horizontal):
     async def run_commmand(self, command: str) -> None:
         log = self.query_one(RightWidget)
         log.write(f"command: {command.command}")
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command.command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+            output = stdout.decode().strip()
+            log.write(output)
+            if proc.returncode != 0:
+                raise Exception(f"command failed with {proc.returncode}")
+        except Exception as e:
+            log.write(f"[red]{e}[/red]")
+
