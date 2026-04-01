@@ -22,6 +22,16 @@ else:
 class EtuiApp(App):
     """ Embedded TUI App"""
 
+    CSS = """
+        TabbedContent {
+            height: 1fr;
+        }
+
+        Input {
+            height: 3
+        }
+    """
+
     def compose(self) -> ComposeResult:
         yield Header()
         with TabbedContent(initial="about"):
@@ -46,6 +56,8 @@ class EtuiApp(App):
         event.input.value=""
 
     def on_command_message(self, message: CommandMessage) -> None:
+        tabs = self.query_one(TabbedContent)
+        tabs.active = "console"
         #self.notify(f"Got command message {message.command}")
         console = self.query_one(ConsoleTab)
         self.run_worker(console.run_commmand(message))
