@@ -6,15 +6,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical
 from textual.widgets import RichLog
-from textual.message import Message
 
-
-class CommandMessage(Message):
-    def __init__(self ,command: str) -> None:
-        super().__init__()
-        self.command = command
-
-class RightWidget(RichLog):
+class LogWidget(RichLog):
     def __init__(self):
         super().__init__(highlight=True, markup=True)
         self.write("Log enabled")
@@ -24,21 +17,25 @@ class ConsoleTab(Horizontal):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield RightWidget()
+            yield LogWidget()
 
-    async def run_commmand(self, command: str) -> None:
-        log = self.query_one(RightWidget)
-        log.write(f"command: {command.command}")
+    async def run_command(self, command: str) -> None:
+        log = self.query_one(LogWidget)
+        log.write(f"command: {command}")
         try:
             proc = await asyncio.create_subprocess_shell(
-                command.command,
+                command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, _ = await proc.communicate()
+            stdout, stderr = await proc.communicate()
             output = stdout.decode().strip()
-            log.write(output)
-            if proc.returncode != 0:
+            if stdout:                                                                                                                               
+                log.write(stdout.decode(errors="replace").rstrip())                                                                                  
+            if stderr:                                                                                                                               
+                log.write(f"[red]{stderr.decode(errors='replace').rstrip()}[/red]")
+            if proc.returncode != 0:                                                                                                                 
+                log.write(f"[red]exit code: {proc.returncode}[/red]")
                 raise Exception(f"command failed with {proc.returncode}")
         except Exception as e:
             log.write(f"[red]{e}[/red]")

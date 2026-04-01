@@ -3,21 +3,24 @@
 
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal
-from textual.containers import Vertical
-from textual.widgets import Placeholder
 from textual.widgets import Footer, Header
 from textual.widgets import Input
 from textual.widgets import TabbedContent, TabPane
+from textual.message import Message
 
 if __package__:
     from .tabs.about import AboutTab
-    from .tabs.console import ConsoleTab, CommandMessage
+    from .tabs.console import ConsoleTab
     from .tabs.files import FilesTab
 else:
     from tabs.about import AboutTab
-    from tabs.console import ConsoleTab, CommandMessage
+    from tabs.console import ConsoleTab
     from tabs.files import FilesTab
+
+class CommandMessage(Message):
+    def __init__(self ,command: str) -> None:
+        super().__init__()
+        self.command = command
 
 class EtuiApp(App):
     """ Embedded TUI App"""
@@ -60,7 +63,7 @@ class EtuiApp(App):
         tabs.active = "console"
         #self.notify(f"Got command message {message.command}")
         console = self.query_one(ConsoleTab)
-        self.run_worker(console.run_commmand(message))
+        self.run_worker(console.run_command(message.command))
 
     
 
