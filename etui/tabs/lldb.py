@@ -37,6 +37,72 @@ SECTIONS = {
 DEFAULT_LAYOUT = ["registers", "assembly", "stack", "backtrace"]
 TITLE_TO_NAME = {title: name for name, (title, _) in SECTIONS.items()}
 
+# Selectable dashboard color schemes. Each maps style keys to Rich style
+# strings ("none" => no style). "header" is the section-title color.
+THEMES = {
+    "vibrant": {
+        "header": "yellow",
+        "dim": "grey50",
+        "reg_name": "bright_cyan",
+        "value": "bright_green",
+        "changed": "bold bright_yellow",
+        "address": "bright_green",
+        "current": "bold black on yellow",
+        "mem_word": "magenta",
+        "frame": "bright_yellow",
+        "thread": "bright_magenta",
+    },
+    "ocean": {
+        "header": "cyan",
+        "dim": "grey46",
+        "reg_name": "cyan",
+        "value": "bright_white",
+        "changed": "bold bright_cyan",
+        "address": "bright_blue",
+        "current": "bold black on cyan",
+        "mem_word": "blue",
+        "frame": "bright_cyan",
+        "thread": "bright_blue",
+    },
+    "solarized": {
+        "header": "#b58900",
+        "dim": "#586e75",
+        "reg_name": "#268bd2",
+        "value": "#93a1a1",
+        "changed": "bold #859900",
+        "address": "#2aa198",
+        "current": "bold #073642 on #b58900",
+        "mem_word": "#6c71c4",
+        "frame": "#cb4b16",
+        "thread": "#d33682",
+    },
+    "subtle": {
+        "header": "yellow",
+        "dim": "grey58",
+        "reg_name": "grey58",
+        "value": "none",
+        "changed": "bold green",
+        "address": "grey58",
+        "current": "bold",
+        "mem_word": "none",
+        "frame": "yellow",
+        "thread": "grey58",
+    },
+    "mono": {
+        "header": "white",
+        "dim": "grey42",
+        "reg_name": "grey70",
+        "value": "none",
+        "changed": "bold white",
+        "address": "grey50",
+        "current": "reverse",
+        "mem_word": "none",
+        "frame": "bold",
+        "thread": "grey50",
+    },
+}
+DEFAULT_THEME = "vibrant"
+
 # Debug control buttons shown at the bottom of the dashboard panel.
 # (label, button id, lldb command). Frame nav refreshes the dashboard
 # directly since it does not trigger a stop event.
@@ -55,25 +121,35 @@ CONTROL_REFRESH = {"ctl-up", "ctl-down"}
 DASHBOARD_PATH = Path.home() / ".config" / "etui" / "dashboard.json"
 
 
-def load_config() -> tuple[list[str], list[str]]:
-    """ Load persisted (layout, collapsed) section lists, validated. """
-    layout, collapsed = list(DEFAULT_LAYOUT), []
+def load_config() -> tuple[list[str], list[str], str]:
+    """ Load persisted (layout, collapsed, theme), validated. """
+    layout, collapsed, theme = list(DEFAULT_LAYOUT), [], DEFAULT_THEME
     try:
         data = json.loads(DASHBOARD_PATH.read_text())
         saved = [s for s in data.get("layout", []) if s in SECTIONS]
         if saved:
             layout = saved
         collapsed = [s for s in data.get("collapsed", []) if s in SECTIONS]
+        if data.get("theme") in THEMES:
+            theme = data["theme"]
     except Exception:
         pass
-    return layout, collapsed
+    return layout, collapsed, theme
 
 
-def save_config(layout: list[str], collapsed: list[str]) -> None:
+def save_config(layout: list[str], collapsed: list[str], theme: str) -> None:
     DASHBOARD_PATH.parent.mkdir(parents=True, exist_ok=True)
     DASHBOARD_PATH.write_text(
-        json.dumps({"layout": layout, "collapsed": collapsed}, indent=2)
+        json.dumps(
+            {"layout": layout, "collapsed": collapsed, "theme": theme}, indent=2
+        )
     )
+
+
+def save_theme(theme: str) -> None:
+    """ Persist only the theme, preserving the saved layout/collapsed. """
+    layout, collapsed, _ = load_config()
+    save_config(layout, collapsed, theme)
 
 
 class SectionMove(Message):
@@ -100,18 +176,20 @@ class DashboardSection(Vertical):
             min-width: 3; width: auto; height: 1; border: none;
             padding: 0 1; margin: 0;
         }
+        DashboardSection .dash-header { border-bottom: solid #3a3a3a; }
         DashboardSection .dash-title {
-            width: 1fr; height: 1; text-style: bold;
-            color: $background; background: $accent;
+            width: 1fr; height: 1; text-style: bold; color: yellow;
         }
         DashboardSection .dash-content { height: auto; padding-left: 1; }
     """
 
-    def __init__(self, name: str, title: str, collapsed: bool):
+    def __init__(self, name: str, title: str, collapsed: bool,
+                 header_color: str = "yellow"):
         super().__init__(id=f"sec-{name}")
         self._name = name
         self._title = title
         self._collapsed = collapsed
+        self._header_color = header_color
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="dash-header"):
@@ -125,6 +203,13 @@ class DashboardSection(Vertical):
         content = Static("", classes="dash-content", id="dash-content", markup=False)
         content.display = not self._collapsed
         yield content
+
+    def on_mount(self) -> None:
+        # Header color uses Textual's parser; ignore values it can't handle.
+        try:
+            self.query_one(".dash-title", Static).styles.color = self._header_color
+        except Exception:
+            pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -169,7 +254,7 @@ class LldbTab(Horizontal):
         }
     """
 
-    def __init__(self, port: int, arch: str | None = None):
+    def __init__(self, port: int | None = None, arch: str | None = None):
         super().__init__()
         self._port = port
         self._arch = arch
@@ -180,7 +265,8 @@ class LldbTab(Horizontal):
         self._last_data: dict[str, list[str]] = {}
         # Previous values per section, used to highlight what changed.
         self._prev: dict[str, dict] = {}
-        self._layout, self._collapsed = load_config()
+        self._layout, self._collapsed, self._theme_name = load_config()
+        self._theme = THEMES[self._theme_name]
         self._stop_hook_id: int | None = None
 
     def compose(self) -> ComposeResult:
@@ -191,14 +277,32 @@ class LldbTab(Horizontal):
             with VerticalScroll(id="lldb-sections"):
                 for name in self._layout:
                     yield DashboardSection(
-                        name, SECTIONS[name][0], name in self._collapsed
+                        name, SECTIONS[name][0], name in self._collapsed,
+                        self._sc("header"),
                     )
             with Horizontal(id="lldb-controls"):
                 for label, bid, _cmd in CONTROLS:
                     yield Button(label, id=bid)
 
     async def on_mount(self) -> None:
+        self.query_one(LldbLog).write(
+            "[dim]waiting for debugger - start it in the Debugger tab[/dim]"
+        )
+
+    async def connect(self, port: int, arch: str | None) -> None:
+        """ (Re)connect lldb to the gdb server on the given port. """
+        if self._proc is not None and self._proc.returncode is None:
+            self._proc.kill()
+            self._proc = None
+        self._port = port
+        self._arch = arch
+        self._stop_hook_id = None
         await self.start()
+
+    async def set_theme(self, name: str) -> None:
+        self._theme_name = name
+        self._theme = THEMES[name]
+        await self._rebuild_sections()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         command = event.value.strip()
@@ -213,7 +317,7 @@ class LldbTab(Horizontal):
             self._collapsed.append(message.name)
         elif not message.collapsed and message.name in self._collapsed:
             self._collapsed.remove(message.name)
-        save_config(self._layout, self._collapsed)
+        save_config(self._layout, self._collapsed, self._theme_name)
 
     async def on_section_move(self, message: SectionMove) -> None:
         i = self._layout.index(message.name)
@@ -221,7 +325,7 @@ class LldbTab(Horizontal):
         if not (0 <= j < len(self._layout)):
             return
         self._layout[i], self._layout[j] = self._layout[j], self._layout[i]
-        save_config(self._layout, self._collapsed)
+        save_config(self._layout, self._collapsed, self._theme_name)
         await self._rebuild_sections()
         await self._install_stop_hook()
         await self.refresh_dashboard()
@@ -244,7 +348,10 @@ class LldbTab(Horizontal):
         await container.remove_children()
         for name in self._layout:
             await container.mount(
-                DashboardSection(name, SECTIONS[name][0], name in self._collapsed)
+                DashboardSection(
+                    name, SECTIONS[name][0], name in self._collapsed,
+                    self._sc("header"),
+                )
             )
         self._apply_data()
 
@@ -375,8 +482,10 @@ class LldbTab(Horizontal):
             section.update_content(renderable)
             self._prev[name] = new_prev
 
-    # Style for a value that changed since the previous stop.
-    CHANGED = "bold white on dark_red"
+    def _sc(self, key: str) -> str | None:
+        """ Resolve a theme style key to a Rich style ("none" => None). """
+        value = self._theme.get(key, "none")
+        return None if value == "none" else value
 
     def _format_section(self, name: str, lines: list[str]):
         if name == "registers":
@@ -391,69 +500,73 @@ class LldbTab(Horizontal):
 
     def _fmt_registers(self, lines: list[str]):
         prev = self._prev.get("registers", {})
+        dim, name_s = self._sc("dim"), self._sc("reg_name")
+        changed_s, value_s = self._sc("changed"), self._sc("value")
         text = Text()
         new: dict[str, str] = {}
         for line in lines:
             m = re.match(r"\s*([\w.]+) = (0x[0-9a-fA-F]+)(.*)", line)
             if not m:
-                text.append(line + "\n", style="dim")
+                text.append(line + "\n", style=dim)
                 continue
             reg, val, rest = m.groups()
             new[reg] = val
             changed = reg in prev and prev[reg] != val
-            text.append(f"{reg:>5}", style="bright_cyan")
-            text.append(" = ")
-            text.append(val, style=self.CHANGED if changed else "bright_green")
-            text.append(rest + "\n", style="dim")
+            text.append(f"{reg:>5}", style=name_s)
+            text.append(" = ", style=dim)
+            text.append(val, style=changed_s if changed else value_s)
+            text.append(rest + "\n", style=dim)
         return text, new
 
     def _fmt_memory(self, lines: list[str]):
         prev = self._prev.get("stack", {})
+        dim, changed_s, word_s = (
+            self._sc("dim"), self._sc("changed"), self._sc("mem_word")
+        )
         text = Text()
         new: dict[str, list[str]] = {}
         for line in lines:
             m = re.match(r"(0x[0-9a-fA-F]+):\s*(.*)", line)
             if not m:
-                text.append(line + "\n", style="dim")
+                text.append(line + "\n", style=dim)
                 continue
             addr, rest = m.groups()
             words = rest.split()
             new[addr] = words
             old = prev.get(addr, [])
-            text.append(addr + ": ", style="bright_cyan")
+            text.append(addr + ": ", style=dim)
             for i, word in enumerate(words):
                 changed = i < len(old) and old[i] != word
-                text.append(
-                    word + " ",
-                    style=self.CHANGED if changed else "magenta",
-                )
+                text.append(word + " ", style=changed_s if changed else word_s)
             text.append("\n")
         return text, new
 
     def _fmt_assembly(self, lines: list[str]):
+        dim, cur_s = self._sc("dim"), self._sc("current")
         text = Text()
         for line in lines:
             current = line.lstrip().startswith("->")
             m = re.match(r"(\s*(?:->)?\s*)(0x[0-9a-fA-F]+)(:?)(.*)", line)
             if not m:
-                text.append(line + "\n", style="dim")
+                text.append(line + "\n", style=dim)
                 continue
             pre, addr, colon, rest = m.groups()
-            style = "bold black on yellow" if current else None
-            text.append(pre, style="bright_yellow" if current else None)
-            text.append(addr, style="bright_green")
-            text.append(colon)
-            text.append(rest, style=style or "white")
-            text.append("\n")
+            if current:
+                text.append(pre + addr + colon + rest + "\n", style=cur_s)
+            else:
+                text.append(pre)
+                text.append(addr, style=dim)
+                text.append(colon, style=dim)
+                text.append(rest + "\n")
         return text, {}
 
     def _fmt_backtrace(self, lines: list[str]):
         text = Text()
         for line in lines:
             t = Text(line + "\n")
-            t.highlight_regex(r"frame #\d+", "bright_yellow")
-            t.highlight_regex(r"thread #\d+", "bright_magenta")
-            t.highlight_regex(r"0x[0-9a-fA-F]+", "bright_green")
+            t.highlight_regex(r"frame #\d+", self._sc("frame") or "")
+            t.highlight_regex(r"thread #\d+", self._sc("thread") or "")
+            t.highlight_regex(r"0x[0-9a-fA-F]+", self._sc("address") or "")
             text.append_text(t)
         return text, {}
 
@@ -461,6 +574,6 @@ class LldbTab(Horizontal):
         text = Text()
         for line in lines:
             t = Text(line + "\n")
-            t.highlight_regex(r"0x[0-9a-fA-F]+", "bright_green")
+            t.highlight_regex(r"0x[0-9a-fA-F]+", self._sc("address") or "")
             text.append_text(t)
         return text, {}

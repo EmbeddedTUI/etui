@@ -14,12 +14,14 @@ if __package__:
     from .tabs.files import FilesTab
     from .tabs.debugger import DebuggerTab, LldbStart
     from .tabs.lldb import LldbTab
+    from .tabs.theme import ThemeTab, ThemeChanged
 else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
     from tabs.files import FilesTab
     from tabs.debugger import DebuggerTab, LldbStart
     from tabs.lldb import LldbTab
+    from tabs.theme import ThemeTab, ThemeChanged
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -46,13 +48,17 @@ class EtuiApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with TabbedContent(initial="about"):
-            with TabPane("Console", id="console"):
-                yield ConsoleTab()
+        with TabbedContent(initial="files"):
             with TabPane("Files", id="files"):
                 yield FilesTab()
+            with TabPane("Console", id="console"):
+                yield ConsoleTab()
             with TabPane("Debugger", id="debugger"):
                 yield DebuggerTab()
+            with TabPane("LLDB", id="lldb"):
+                yield LldbTab()
+            with TabPane("Theme", id="theme"):
+                yield ThemeTab()
             with TabPane("About", id="about"):
                 yield AboutTab()
         yield Input()
@@ -70,18 +76,13 @@ class EtuiApp(App):
         event.input.value=""
 
     async def on_lldb_start(self, message: LldbStart) -> None:
-        tabs = self.query_one(TabbedContent)
-        # Replace any previous LLDB tab so we reconnect cleanly.
-        try:
-            await tabs.remove_pane("lldb")
-        except Exception:
-            pass
-        # Insert before About so About stays the last (right-docked) tab.
-        await tabs.add_pane(
-            TabPane("LLDB", LldbTab(message.port, message.arch), id="lldb"),
-            before="about",
-        )
-        tabs.active = "lldb"
+        # The LLDB tab is always present; (re)connect it to the gdb server.
+        lldb = self.query_one(LldbTab)
+        await lldb.connect(message.port, message.arch)
+        self.query_one(TabbedContent).active = "lldb"
+
+    async def on_theme_changed(self, message: ThemeChanged) -> None:
+        await self.query_one(LldbTab).set_theme(message.theme)
 
     def on_command_message(self, message: CommandMessage) -> None:
         tabs = self.query_one(TabbedContent)
