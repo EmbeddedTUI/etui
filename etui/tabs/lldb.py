@@ -6,6 +6,7 @@ import json
 import re
 import shutil
 from pathlib import Path
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical
@@ -100,7 +101,8 @@ class DashboardSection(Vertical):
             padding: 0 1; margin: 0;
         }
         DashboardSection .dash-title {
-            width: 1fr; height: 1; text-style: bold reverse;
+            width: 1fr; height: 1; text-style: bold;
+            color: $background; background: $accent;
         }
         DashboardSection .dash-content { height: auto; padding-left: 1; }
     """
@@ -136,8 +138,8 @@ class DashboardSection(Vertical):
         elif event.button.id == "dash-down":
             self.post_message(SectionMove(self._name, +1))
 
-    def update_content(self, lines: list[str]) -> None:
-        self.query_one("#dash-content", Static).update("\n".join(lines))
+    def update_content(self, renderable) -> None:
+        self.query_one("#dash-content", Static).update(renderable)
 
 
 class LldbLog(RichLog):
@@ -176,6 +178,8 @@ class LldbTab(Horizontal):
         self._in_dash = False
         self._dash_buf: list[str] = []
         self._last_data: dict[str, list[str]] = {}
+        # Previous values per section, used to highlight what changed.
+        self._prev: dict[str, dict] = {}
         self._layout, self._collapsed = load_config()
         self._stop_hook_id: int | None = None
 
@@ -366,4 +370,97 @@ class LldbTab(Horizontal):
                 section = self.query_one(f"#sec-{name}", DashboardSection)
             except Exception:
                 continue
-            section.update_content(self._last_data.get(name, []))
+            lines = self._last_data.get(name, [])
+            renderable, new_prev = self._format_section(name, lines)
+            section.update_content(renderable)
+            self._prev[name] = new_prev
+
+    # Style for a value that changed since the previous stop.
+    CHANGED = "bold white on dark_red"
+
+    def _format_section(self, name: str, lines: list[str]):
+        if name == "registers":
+            return self._fmt_registers(lines)
+        if name == "stack":
+            return self._fmt_memory(lines)
+        if name == "assembly":
+            return self._fmt_assembly(lines)
+        if name == "backtrace":
+            return self._fmt_backtrace(lines)
+        return self._fmt_plain(lines)
+
+    def _fmt_registers(self, lines: list[str]):
+        prev = self._prev.get("registers", {})
+        text = Text()
+        new: dict[str, str] = {}
+        for line in lines:
+            m = re.match(r"\s*([\w.]+) = (0x[0-9a-fA-F]+)(.*)", line)
+            if not m:
+                text.append(line + "\n", style="dim")
+                continue
+            reg, val, rest = m.groups()
+            new[reg] = val
+            changed = reg in prev and prev[reg] != val
+            text.append(f"{reg:>5}", style="bright_cyan")
+            text.append(" = ")
+            text.append(val, style=self.CHANGED if changed else "bright_green")
+            text.append(rest + "\n", style="dim")
+        return text, new
+
+    def _fmt_memory(self, lines: list[str]):
+        prev = self._prev.get("stack", {})
+        text = Text()
+        new: dict[str, list[str]] = {}
+        for line in lines:
+            m = re.match(r"(0x[0-9a-fA-F]+):\s*(.*)", line)
+            if not m:
+                text.append(line + "\n", style="dim")
+                continue
+            addr, rest = m.groups()
+            words = rest.split()
+            new[addr] = words
+            old = prev.get(addr, [])
+            text.append(addr + ": ", style="bright_cyan")
+            for i, word in enumerate(words):
+                changed = i < len(old) and old[i] != word
+                text.append(
+                    word + " ",
+                    style=self.CHANGED if changed else "magenta",
+                )
+            text.append("\n")
+        return text, new
+
+    def _fmt_assembly(self, lines: list[str]):
+        text = Text()
+        for line in lines:
+            current = line.lstrip().startswith("->")
+            m = re.match(r"(\s*(?:->)?\s*)(0x[0-9a-fA-F]+)(:?)(.*)", line)
+            if not m:
+                text.append(line + "\n", style="dim")
+                continue
+            pre, addr, colon, rest = m.groups()
+            style = "bold black on yellow" if current else None
+            text.append(pre, style="bright_yellow" if current else None)
+            text.append(addr, style="bright_green")
+            text.append(colon)
+            text.append(rest, style=style or "white")
+            text.append("\n")
+        return text, {}
+
+    def _fmt_backtrace(self, lines: list[str]):
+        text = Text()
+        for line in lines:
+            t = Text(line + "\n")
+            t.highlight_regex(r"frame #\d+", "bright_yellow")
+            t.highlight_regex(r"thread #\d+", "bright_magenta")
+            t.highlight_regex(r"0x[0-9a-fA-F]+", "bright_green")
+            text.append_text(t)
+        return text, {}
+
+    def _fmt_plain(self, lines: list[str]):
+        text = Text()
+        for line in lines:
+            t = Text(line + "\n")
+            t.highlight_regex(r"0x[0-9a-fA-F]+", "bright_green")
+            text.append_text(t)
+        return text, {}
