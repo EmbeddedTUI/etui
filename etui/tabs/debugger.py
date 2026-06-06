@@ -190,6 +190,7 @@ class DebuggerTab(Horizontal):
                 yield Button("Settings", id="dbg-settings")
                 yield Button("Start", id="dbg-start", variant="success")
                 yield Button("Stop", id="dbg-stop", variant="error")
+                yield Button("Kill stale", id="dbg-kill-stale", variant="warning")
             yield DebuggerLog()
             yield Input(placeholder="debugger command", id="dbg-input")
 
@@ -211,6 +212,8 @@ class DebuggerTab(Horizontal):
             await self.start()
         elif event.button.id == "dbg-stop":
             await self.stop()
+        elif event.button.id == "dbg-kill-stale":
+            await self.kill_stale()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         command = event.value.strip()
@@ -385,9 +388,9 @@ class DebuggerTab(Horizontal):
             if uid and ":" not in uid:
                 argv += ["-c", f"adapter serial {uid}"]
             argv += ["-c", f"adapter speed {s['adapter_speed_khz']}"]
-            argv += ["-c", f"gdb_port {s['gdb_port']}"]
-            argv += ["-c", f"telnet_port {s['telnet_port']}"]
-            argv += ["-c", f"tcl_port {s['tcl_port']}"]
+            argv += ["-c", f"gdb port {s['gdb_port']}"]
+            argv += ["-c", f"telnet port {s['telnet_port']}"]
+            argv += ["-c", f"tcl port {s['tcl_port']}"]
             argv += ["-c", f"set CHIPNAME {self._target}"]
             argv += ["-f", MSPM0_TARGET_CFG]
         return argv
@@ -414,6 +417,11 @@ class DebuggerTab(Horizontal):
         log.write(f"[green]{self._backend} started[/green]")
         self.run_worker(self._read_output(), exclusive=False)
 
+    def on_unmount(self) -> None:
+        # Avoid orphaned debugger processes holding the probe / ports.
+        if self._proc is not None and self._proc.returncode is None:
+            self._proc.kill()
+
     async def stop(self) -> None:
         log = self.query_one(DebuggerLog)
         if self._proc is None or self._proc.returncode is not None:
@@ -423,6 +431,46 @@ class DebuggerTab(Horizontal):
         await self._proc.wait()
         log.write(f"[green]{self._backend} stopped[/green]")
         self._proc = None
+
+    @staticmethod
+    def _kill_stale_procs(own_pid: int | None) -> list[int]:
+        """ Terminate stray openocd/pyocd processes, skipping our own. """
+        import psutil
+
+        killed: list[int] = []
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                name = (proc.info.get("name") or "").lower()
+                if proc.pid == own_pid:
+                    continue
+                if "openocd" in name or "pyocd" in name:
+                    proc.terminate()
+                    killed.append(proc.pid)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        gone, alive = psutil.wait_procs(
+            [p for p in psutil.process_iter() if p.pid in killed], timeout=2
+        )
+        for proc in alive:
+            try:
+                proc.kill()
+            except psutil.NoSuchProcess:
+                continue
+        return killed
+
+    async def kill_stale(self) -> None:
+        log = self.query_one(DebuggerLog)
+        own_pid = self._proc.pid if self._proc else None
+        log.write("[cyan]killing stale debugger processes...[/cyan]")
+        try:
+            killed = await asyncio.to_thread(self._kill_stale_procs, own_pid)
+        except Exception as e:
+            log.write(f"[red]kill failed: {e}[/red]")
+            return
+        if killed:
+            log.write(f"[green]killed:[/green] {', '.join(map(str, killed))}")
+        else:
+            log.write("[yellow]no stale processes found[/yellow]")
 
     async def send_command(self, command: str) -> None:
         log = self.query_one(DebuggerLog)
