@@ -12,10 +12,12 @@ if __package__:
     from .tabs.about import AboutTab
     from .tabs.console import ConsoleTab
     from .tabs.files import FilesTab
+    from .tabs.debugger import DebuggerTab
 else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
     from tabs.files import FilesTab
+    from tabs.debugger import DebuggerTab
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -42,6 +44,8 @@ class EtuiApp(App):
                 yield ConsoleTab()
             with TabPane("Files", id="files"):
                 yield FilesTab()
+            with TabPane("Debugger", id="debugger"):
+                yield DebuggerTab()
             with TabPane("About", id="about"):
                 yield AboutTab()
         yield Input()
