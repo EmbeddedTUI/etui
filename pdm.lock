@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:15cd33a4f49f2abeafaf5be1a1c53b6ea56cd8f2add27eb409cdfb18122ddf5c"
+content_hash = "sha256:7b113c235a52a3566036c2c65554e10093c7958add5c4c1744758abd15338aef"
 
 [[metadata.targets]]
 requires_python = ">=3.13"
@@ -945,6 +945,16 @@ dependencies = [
 files = [
     {file = "pyocd-0.44.1-py3-none-any.whl", hash = "sha256:4f09f056a9695f34df6825900b3ae968b6259e7af5a3b82afdf9dbdce90fc001"},
     {file = "pyocd-0.44.1.tar.gz", hash = "sha256:5b64483bc4608efb4d778d62d5da887c5d732f52ed8add8a004035d4148026bc"},
+]
+
+[[package]]
+name = "pyserial"
+version = "3.5"
+summary = "Python Serial Port Extension"
+groups = ["default"]
+files = [
+    {file = "pyserial-3.5-py2.py3-none-any.whl", hash = "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0"},
+    {file = "pyserial-3.5.tar.gz", hash = "sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb"},
 ]
 
 [[package]]

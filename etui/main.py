@@ -15,6 +15,7 @@ if __package__:
     from .tabs.debugger import DebuggerTab, LldbStart
     from .tabs.lldb import LldbTab
     from .tabs.theme import ThemeTab, ThemeChanged
+    from .tabs.serial import SerialTab
 else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
@@ -22,6 +23,7 @@ else:
     from tabs.debugger import DebuggerTab, LldbStart
     from tabs.lldb import LldbTab
     from tabs.theme import ThemeTab, ThemeChanged
+    from tabs.serial import SerialTab
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -44,6 +46,30 @@ class EtuiApp(App):
         Tabs Tab:last-of-type {
             dock: right;
         }
+
+        .control-bar {
+            height: 3;
+            align: left middle;
+            padding: 0 1;
+        }
+
+        .control-label {
+            margin-top: 1;
+            margin-right: 1;
+        }
+        
+        #serial-port {
+            width: 40;
+        }
+        
+        #serial-baud {
+            width: 20;
+        }
+
+        #serial-connect {
+            width: 15;
+            margin-left: 1;
+        }
     """
 
     def compose(self) -> ComposeResult:
@@ -53,6 +79,8 @@ class EtuiApp(App):
                 yield FilesTab()
             with TabPane("Console", id="console"):
                 yield ConsoleTab()
+            with TabPane("Serial", id="serial"):
+                yield SerialTab()
             with TabPane("Debugger", id="debugger"):
                 yield DebuggerTab()
             with TabPane("LLDB", id="lldb"):
@@ -86,10 +114,14 @@ class EtuiApp(App):
 
     def on_command_message(self, message: CommandMessage) -> None:
         tabs = self.query_one(TabbedContent)
-        tabs.active = "console"
-        #self.notify(f"Got command message {message.command}")
-        console = self.query_one(ConsoleTab)
-        self.run_worker(console.run_command(message.command))
+        if tabs.active == "serial":
+            serial = self.query_one(SerialTab)
+            serial.send_data(message.command)
+        else:
+            tabs.active = "console"
+            #self.notify(f"Got command message {message.command}")
+            console = self.query_one(ConsoleTab)
+            self.run_worker(console.run_command(message.command))
 
     
 
