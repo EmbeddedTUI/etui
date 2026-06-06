@@ -8,6 +8,7 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button
 from textual.widgets import Input
@@ -33,12 +34,12 @@ XDS110_NATIVE = "interface/xds110.cfg"
 XDS110_CMSISDAP = "interface/cmsis-dap.cfg"
 
 # MCU families selectable once an XDS110 probe is detected. They all share
-# one OpenOCD target config (SWD); the label only sets the chip name.
-# label -> chipname passed to OpenOCD as CHIPNAME.
+# one OpenOCD target config (SWD); the label sets the OpenOCD chip name and
+# the LLDB target architecture. label -> (chipname, lldb_arch).
 TARGETS = {
-    "MSPM0L": "mspm0l",
-    "MSPM0G": "mspm0g",
-    "MSPM0C": "mspm0c",
+    "MSPM0L": ("mspm0l", "armv6m"),
+    "MSPM0G": ("mspm0g", "armv6m"),
+    "MSPM0C": ("mspm0c", "armv6m"),
 }
 MSPM0_TARGET_CFG = "target/ti/mspm0.cfg"
 
@@ -141,6 +142,15 @@ class SettingsScreen(ModalScreen[dict | None]):
         self.dismiss(result)
 
 
+class LldbStart(Message):
+    """ Posted when the hardware debugger's gdb server is ready for lldb. """
+
+    def __init__(self, port: int, arch: str | None = None) -> None:
+        super().__init__()
+        self.port = port
+        self.arch = arch
+
+
 class DebuggerLog(RichLog):
     def __init__(self):
         super().__init__(highlight=True, markup=True)
@@ -160,8 +170,12 @@ class DebuggerTab(Horizontal):
         self._probes: dict[str, dict] = {}
         # Selected MCU target chipname (e.g. "mspm0l") or None.
         self._target: str | None = None
+        # LLDB architecture for the selected target (e.g. "armv6m") or None.
+        self._target_arch: str | None = None
         # Persisted connection settings (adapter speed, ports, ...).
         self._settings = load_settings()
+        # Whether the LLDB tab has been opened for the current session.
+        self._lldb_opened = False
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -200,8 +214,8 @@ class DebuggerTab(Horizontal):
         elif event.select.id == "dbg-probe":
             self._select_probe(self.query_one("#dbg-probe", Select), str(event.value))
         elif event.select.id == "dbg-target":
-            value = str(event.value)
-            self._target = TARGETS.get(value)
+            chip_arch = TARGETS.get(str(event.value))
+            self._target, self._target_arch = chip_arch or (None, None)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "dbg-settings":
@@ -415,6 +429,7 @@ class DebuggerTab(Horizontal):
             stderr=asyncio.subprocess.STDOUT,
         )
         log.write(f"[green]{self._backend} started[/green]")
+        self._lldb_opened = False
         self.run_worker(self._read_output(), exclusive=False)
 
     def on_unmount(self) -> None:
@@ -489,4 +504,17 @@ class DebuggerTab(Horizontal):
             line = await self._proc.stdout.readline()
             if not line:
                 break
-            log.write(line.decode(errors="replace").rstrip())
+            text = line.decode(errors="replace").rstrip()
+            log.write(text)
+            # Once the gdb server is listening, open the LLDB tab.
+            if (
+                not self._lldb_opened
+                and self._backend == "openocd"
+                and "for gdb connections" in text.lower()
+            ):
+                self._lldb_opened = True
+                # Pass the selected target's architecture so lldb does not
+                # probe bogus memory while auto-detecting on connect.
+                self.post_message(
+                    LldbStart(self._settings["gdb_port"], self._target_arch)
+                )

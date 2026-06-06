@@ -12,12 +12,14 @@ if __package__:
     from .tabs.about import AboutTab
     from .tabs.console import ConsoleTab
     from .tabs.files import FilesTab
-    from .tabs.debugger import DebuggerTab
+    from .tabs.debugger import DebuggerTab, LldbStart
+    from .tabs.lldb import LldbTab
 else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
     from tabs.files import FilesTab
-    from tabs.debugger import DebuggerTab
+    from tabs.debugger import DebuggerTab, LldbStart
+    from tabs.lldb import LldbTab
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -34,6 +36,11 @@ class EtuiApp(App):
 
         Input {
             height: 3
+        }
+
+        /* Push the About tab (last one) to the far right of the tab bar. */
+        Tabs Tab:last-of-type {
+            dock: right;
         }
     """
 
@@ -61,6 +68,20 @@ class EtuiApp(App):
         #self.notify(f"Posting command messafge {command}")
         self.post_message(CommandMessage(command))
         event.input.value=""
+
+    async def on_lldb_start(self, message: LldbStart) -> None:
+        tabs = self.query_one(TabbedContent)
+        # Replace any previous LLDB tab so we reconnect cleanly.
+        try:
+            await tabs.remove_pane("lldb")
+        except Exception:
+            pass
+        # Insert before About so About stays the last (right-docked) tab.
+        await tabs.add_pane(
+            TabPane("LLDB", LldbTab(message.port, message.arch), id="lldb"),
+            before="about",
+        )
+        tabs.active = "lldb"
 
     def on_command_message(self, message: CommandMessage) -> None:
         tabs = self.query_one(TabbedContent)
