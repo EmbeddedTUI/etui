@@ -30,7 +30,7 @@ KNOWN_USB_PROBES = {
     (0x0451, 0xBEF3): (
         "TI XDS110 (CC1352R1 LaunchPad)",
         "openocd",
-        "board/ti_cc13x2_launchpad.cfg",
+        "board/ti/cc13x2-launchpad.cfg",
     ),
     (0x0451, 0xBEF4): ("TI XDS110", "openocd", "interface/xds110.cfg"),
     (0x1CBE, 0x00FD): ("TI XDS110", "openocd", "interface/xds110.cfg"),
@@ -178,8 +178,24 @@ class DebuggerTab(Horizontal):
             log.write("[yellow]no debug probes found[/yellow]")
 
         probe_select.set_options(options)
-        probe_select.value = PROBE_AUTO
-        self._probe = None
+        if len(probes) == 1:
+            # Single probe: auto-select it so Start just works. Setting the
+            # value drives on_select_changed, which also switches backend.
+            self._select_probe(probe_select, probes[0]["uid"])
+            log.write(
+                f"[cyan]selected {probes[0]['desc']} "
+                f"(backend: {self._backend})[/cyan]"
+            )
+        else:
+            probe_select.value = PROBE_AUTO
+            self._probe = None
+
+    def _select_probe(self, probe_select: Select, uid: str) -> None:
+        probe_select.value = uid
+        self._probe = self._probes.get(uid)
+        if self._probe and self._probe.get("driver") in BACKENDS:
+            self._backend = self._probe["driver"]
+            self.query_one("#dbg-backend", Select).value = self._backend
 
     def _build_argv(self, log: "DebuggerLog") -> list[str] | None:
         """ Build the backend command line for the selected probe. """
