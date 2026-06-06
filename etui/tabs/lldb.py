@@ -114,8 +114,9 @@ CONTROLS = [
     ("Halt", "ctl-halt", "process interrupt"),
     ("Up", "ctl-up", "up"),
     ("Down", "ctl-down", "down"),
+    ("Restart", "ctl-restart", None),
 ]
-CONTROL_CMDS = {bid: cmd for _, bid, cmd in CONTROLS}
+CONTROL_CMDS = {bid: cmd for _, bid, cmd in CONTROLS if cmd}
 CONTROL_REFRESH = {"ctl-up", "ctl-down"}
 
 DASHBOARD_PATH = Path.home() / ".config" / "etui" / "dashboard.json"
@@ -299,6 +300,14 @@ class LldbTab(Horizontal):
         self._stop_hook_id = None
         await self.start()
 
+    async def restart(self) -> None:
+        log = self.query_one(LldbLog)
+        if self._port is None:
+            log.write("[yellow]no previous connection to restart[/yellow]")
+            return
+        log.write("[cyan]restarting lldb...[/cyan]")
+        await self.connect(self._port, self._arch)
+
     async def set_theme(self, name: str) -> None:
         self._theme_name = name
         self._theme = THEMES[name]
@@ -331,6 +340,9 @@ class LldbTab(Horizontal):
         await self.refresh_dashboard()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "ctl-restart":
+            await self.restart()
+            return
         cmd = CONTROL_CMDS.get(event.button.id or "")
         if cmd is None:
             return
@@ -427,12 +439,32 @@ class LldbTab(Horizontal):
     # ---------------------------------------------------------------- output
 
     async def _read_output(self) -> None:
-        assert self._proc is not None and self._proc.stdout is not None
+        proc = self._proc
+        assert proc is not None and proc.stdout is not None
         while True:
-            line = await self._proc.stdout.readline()
+            line = await proc.stdout.readline()
             if not line:
                 break
             self._route(line.decode(errors="replace").rstrip())
+        # stdout closed: the lldb process has exited (often a crash).
+        await proc.wait()
+        # Ignore if a newer session already replaced this process.
+        if proc is self._proc:
+            self._handle_exit(proc.returncode)
+
+    def _handle_exit(self, code: int | None) -> None:
+        log = self.query_one(LldbLog)
+        if code is not None and code < 0:
+            log.write(
+                f"[bold red]lldb crashed (signal {-code}).[/bold red] "
+                "press Restart to reconnect."
+            )
+        elif code:
+            log.write(
+                f"[red]lldb exited (code {code}).[/red] press Restart to reconnect."
+            )
+        else:
+            log.write("[yellow]lldb session ended.[/yellow]")
 
     def _route(self, text: str) -> None:
         """ Send dashboard-marked output to the dashboard, rest to console. """
