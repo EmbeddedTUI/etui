@@ -20,20 +20,31 @@ BACKENDS = {
     "gdb": ["gdb", "--quiet", "--interpreter=mi2"],
 }
 
-# Sentinel value used in the probe Select when no specific probe is chosen.
+# Sentinel values for the Select widgets.
 PROBE_AUTO = "__auto__"
+TARGET_NONE = "__none__"
 
-# Known debug probes identified purely by USB VID:PID. This catches probes
-# that pyocd cannot enumerate itself (e.g. the TI XDS110 on LaunchPads).
-# (vid, pid) -> (description, driver, openocd_config)
+# OpenOCD interface configs for the XDS110 in its two firmware modes.
+XDS110_NATIVE = "interface/xds110.cfg"
+XDS110_CMSISDAP = "interface/cmsis-dap.cfg"
+
+# MCU families selectable once an XDS110 probe is detected. They all share
+# one OpenOCD target config (SWD); the label only sets the chip name.
+# label -> chipname passed to OpenOCD as CHIPNAME.
+TARGETS = {
+    "MSPM0L": "mspm0l",
+    "MSPM0G": "mspm0g",
+    "MSPM0C": "mspm0c",
+}
+MSPM0_TARGET_CFG = "target/ti/mspm0.cfg"
+
+# Known debug probes identified purely by USB VID:PID. This catches the
+# XDS110 in its native (non-CMSIS-DAP) firmware mode, which pyocd cannot
+# enumerate itself. (vid, pid) -> (description, driver, interface_cfg)
 KNOWN_USB_PROBES = {
-    (0x0451, 0xBEF3): (
-        "TI XDS110 (CC1352R1 LaunchPad)",
-        "openocd",
-        "board/ti/cc13x2-launchpad.cfg",
-    ),
-    (0x0451, 0xBEF4): ("TI XDS110", "openocd", "interface/xds110.cfg"),
-    (0x1CBE, 0x00FD): ("TI XDS110", "openocd", "interface/xds110.cfg"),
+    (0x0451, 0xBEF3): ("TI XDS110 (LaunchPad)", "openocd", XDS110_NATIVE),
+    (0x0451, 0xBEF4): ("TI XDS110", "openocd", XDS110_NATIVE),
+    (0x1CBE, 0x00FD): ("TI XDS110", "openocd", XDS110_NATIVE),
 }
 
 
@@ -54,6 +65,8 @@ class DebuggerTab(Horizontal):
         self._probe: dict | None = None
         # uid -> probe info dict, keyed by the value stored in the Select.
         self._probes: dict[str, dict] = {}
+        # Selected MCU target chipname (e.g. "mspm0l") or None.
+        self._target: str | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -71,6 +84,14 @@ class DebuggerTab(Horizontal):
                     allow_blank=False,
                     id="dbg-probe",
                 )
+                yield Select(
+                    [("Target...", TARGET_NONE)]
+                    + [(label, label) for label in TARGETS],
+                    value=TARGET_NONE,
+                    allow_blank=False,
+                    disabled=True,
+                    id="dbg-target",
+                )
                 yield Button("Start", id="dbg-start", variant="success")
                 yield Button("Stop", id="dbg-stop", variant="error")
             yield DebuggerLog()
@@ -80,14 +101,10 @@ class DebuggerTab(Horizontal):
         if event.select.id == "dbg-backend":
             self._backend = str(event.value)
         elif event.select.id == "dbg-probe":
+            self._select_probe(self.query_one("#dbg-probe", Select), str(event.value))
+        elif event.select.id == "dbg-target":
             value = str(event.value)
-            self._probe = self._probes.get(value)
-            # Auto-switch the backend to whatever the chosen probe needs.
-            if self._probe and self._probe.get("driver"):
-                driver = self._probe["driver"]
-                if driver in BACKENDS:
-                    self._backend = driver
-                    self.query_one("#dbg-backend", Select).value = driver
+            self._target = TARGETS.get(value)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "dbg-detect":
@@ -109,7 +126,7 @@ class DebuggerTab(Horizontal):
 
         Combines pyocd's native probe enumeration with a USB VID:PID scan
         for known probes that pyocd cannot detect itself (e.g. TI XDS110).
-        Returns a list of dicts: {uid, desc, driver, config}.
+        Returns a list of dicts: {uid, desc, driver, interface}.
         """
         result: list[dict] = []
         seen_uids: set[str] = set()
@@ -122,8 +139,10 @@ class DebuggerTab(Horizontal):
                 uid = probe.unique_id
                 desc = probe.description or probe.product_name or "probe"
                 seen_uids.add(uid)
+                driver, interface = DebuggerTab._classify(desc)
                 result.append(
-                    {"uid": uid, "desc": desc, "driver": "pyocd", "config": None}
+                    {"uid": uid, "desc": desc, "driver": driver,
+                     "interface": interface}
                 )
         except Exception:
             pass
@@ -137,7 +156,7 @@ class DebuggerTab(Horizontal):
                 key = (dev.idVendor, dev.idProduct)
                 if key not in KNOWN_USB_PROBES:
                     continue
-                desc, driver, config = KNOWN_USB_PROBES[key]
+                desc, driver, interface = KNOWN_USB_PROBES[key]
                 serial = None
                 try:
                     serial = usb.util.get_string(dev, dev.iSerialNumber)
@@ -148,12 +167,28 @@ class DebuggerTab(Horizontal):
                     continue
                 seen_uids.add(uid)
                 result.append(
-                    {"uid": uid, "desc": desc, "driver": driver, "config": config}
+                    {"uid": uid, "desc": desc, "driver": driver,
+                     "interface": interface}
                 )
         except Exception:
             pass
 
         return result
+
+    @staticmethod
+    def _classify(desc: str) -> tuple[str, str | None]:
+        """ Pick a backend + OpenOCD interface from a pyocd probe description.
+
+        pyocd can enumerate an XDS110 running CMSIS-DAP firmware but cannot
+        target TI MSPM0/CC13x2 devices, so route the XDS110 to OpenOCD using
+        the matching interface. Anything else stays on pyocd.
+        """
+        d = desc.lower()
+        if "xds110" in d:
+            if "cmsis-dap" in d or "cmsis dap" in d:
+                return "openocd", XDS110_CMSISDAP
+            return "openocd", XDS110_NATIVE
+        return "pyocd", None
 
     async def detect_probes(self) -> None:
         log = self.query_one(DebuggerLog)
@@ -191,11 +226,21 @@ class DebuggerTab(Horizontal):
             self._probe = None
 
     def _select_probe(self, probe_select: Select, uid: str) -> None:
-        probe_select.value = uid
+        if probe_select.value != uid:
+            probe_select.value = uid
         self._probe = self._probes.get(uid)
         if self._probe and self._probe.get("driver") in BACKENDS:
             self._backend = self._probe["driver"]
             self.query_one("#dbg-backend", Select).value = self._backend
+        # An XDS110 (OpenOCD) probe can drive several MCU families - ask the
+        # user which one before connecting.
+        target_select = self.query_one("#dbg-target", Select)
+        is_xds110 = bool(self._probe and self._probe.get("interface"))
+        target_select.disabled = not is_xds110
+        if is_xds110 and self._target is None:
+            self.query_one(DebuggerLog).write(
+                "[yellow]select target MCU (MSPM0L / MSPM0G / MSPM0C)[/yellow]"
+            )
 
     def _build_argv(self, log: "DebuggerLog") -> list[str] | None:
         """ Build the backend command line for the selected probe. """
@@ -212,14 +257,24 @@ class DebuggerTab(Horizontal):
             if self._probe:
                 argv += ["--uid", self._probe["uid"]]
         elif backend == "openocd":
-            config = self._probe.get("config") if self._probe else None
-            if config:
-                argv += ["-f", config]
-            else:
+            interface = self._probe.get("interface") if self._probe else None
+            if not interface:
                 log.write(
                     "[yellow]openocd: no config for probe, "
                     "type commands manually[/yellow]"
                 )
+                return argv
+            if self._target is None:
+                log.write("[red]select a target MCU first[/red]")
+                return None
+            # interface selects the adapter driver, then bind this probe by
+            # serial, then set the chip name before sourcing the target cfg.
+            argv += ["-f", interface]
+            uid = self._probe["uid"]
+            if uid and ":" not in uid:
+                argv += ["-c", f"adapter serial {uid}"]
+            argv += ["-c", f"set CHIPNAME {self._target}"]
+            argv += ["-f", MSPM0_TARGET_CFG]
         return argv
 
     async def start(self) -> None:
