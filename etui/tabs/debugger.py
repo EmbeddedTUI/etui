@@ -2,12 +2,16 @@
 # Copyright (c) 2026 32bitmico LLC
 
 import asyncio
+import json
 import shutil
+from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical
+from textual.screen import ModalScreen
 from textual.widgets import Button
 from textual.widgets import Input
+from textual.widgets import Label
 from textual.widgets import RichLog
 from textual.widgets import Select
 
@@ -48,6 +52,95 @@ KNOWN_USB_PROBES = {
 }
 
 
+# Persisted debugger settings. The order here is the order shown in the
+# settings dialog; the value type is inferred from the default.
+DEFAULT_SETTINGS = {
+    "adapter_speed_khz": 4000,
+    "transport": "swd",
+    "gdb_port": 3333,
+    "telnet_port": 4444,
+    "tcl_port": 6666,
+}
+
+SETTINGS_PATH = Path.home() / ".config" / "etui" / "debugger.json"
+
+
+def load_settings() -> dict:
+    """ Load persisted settings, falling back to defaults for missing keys. """
+    settings = dict(DEFAULT_SETTINGS)
+    try:
+        saved = json.loads(SETTINGS_PATH.read_text())
+        for key in DEFAULT_SETTINGS:
+            if key in saved:
+                settings[key] = saved[key]
+    except Exception:
+        pass
+    return settings
+
+
+def save_settings(settings: dict) -> None:
+    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_PATH.write_text(json.dumps(settings, indent=2))
+
+
+class SettingsScreen(ModalScreen[dict | None]):
+    """ Modal dialog to edit and persist debugger settings. """
+
+    CSS = """
+        SettingsScreen {
+            align: center middle;
+        }
+        #settings-box {
+            width: 60;
+            height: auto;
+            border: thick $accent;
+            background: $surface;
+            padding: 1 2;
+        }
+        #settings-box Input {
+            margin-bottom: 1;
+        }
+        #settings-buttons {
+            height: auto;
+            align-horizontal: right;
+        }
+        #settings-buttons Button {
+            margin-left: 2;
+        }
+    """
+
+    def __init__(self, settings: dict):
+        super().__init__()
+        self._settings = settings
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings-box"):
+            yield Label("Debugger Settings")
+            for key, value in self._settings.items():
+                yield Label(key)
+                yield Input(value=str(value), id=f"set-{key}")
+            with Horizontal(id="settings-buttons"):
+                yield Button("Save", id="settings-save", variant="success")
+                yield Button("Cancel", id="settings-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "settings-cancel":
+            self.dismiss(None)
+            return
+        result = {}
+        for key, default in self._settings.items():
+            raw = self.query_one(f"#set-{key}", Input).value.strip()
+            # Coerce to the default's type (int settings stay int).
+            if isinstance(default, int):
+                try:
+                    result[key] = int(raw)
+                except ValueError:
+                    result[key] = default
+            else:
+                result[key] = raw
+        self.dismiss(result)
+
+
 class DebuggerLog(RichLog):
     def __init__(self):
         super().__init__(highlight=True, markup=True)
@@ -67,6 +160,8 @@ class DebuggerTab(Horizontal):
         self._probes: dict[str, dict] = {}
         # Selected MCU target chipname (e.g. "mspm0l") or None.
         self._target: str | None = None
+        # Persisted connection settings (adapter speed, ports, ...).
+        self._settings = load_settings()
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -92,6 +187,7 @@ class DebuggerTab(Horizontal):
                     disabled=True,
                     id="dbg-target",
                 )
+                yield Button("Settings", id="dbg-settings")
                 yield Button("Start", id="dbg-start", variant="success")
                 yield Button("Stop", id="dbg-stop", variant="error")
             yield DebuggerLog()
@@ -107,7 +203,9 @@ class DebuggerTab(Horizontal):
             self._target = TARGETS.get(value)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "dbg-detect":
+        if event.button.id == "dbg-settings":
+            self.open_settings()
+        elif event.button.id == "dbg-detect":
             await self.detect_probes()
         elif event.button.id == "dbg-start":
             await self.start()
@@ -119,6 +217,18 @@ class DebuggerTab(Horizontal):
         event.input.value = ""
         if command:
             await self.send_command(command)
+
+    def open_settings(self) -> None:
+        def _on_close(result: dict | None) -> None:
+            if result is None:
+                return
+            self._settings = result
+            save_settings(result)
+            self.query_one(DebuggerLog).write(
+                f"[green]settings saved[/green] [dim]{SETTINGS_PATH}[/dim]"
+            )
+
+        self.app.push_screen(SettingsScreen(dict(self._settings)), _on_close)
 
     @staticmethod
     def _list_probes() -> list[dict]:
@@ -269,10 +379,15 @@ class DebuggerTab(Horizontal):
                 return None
             # interface selects the adapter driver, then bind this probe by
             # serial, then set the chip name before sourcing the target cfg.
+            s = self._settings
             argv += ["-f", interface]
             uid = self._probe["uid"]
             if uid and ":" not in uid:
                 argv += ["-c", f"adapter serial {uid}"]
+            argv += ["-c", f"adapter speed {s['adapter_speed_khz']}"]
+            argv += ["-c", f"gdb_port {s['gdb_port']}"]
+            argv += ["-c", f"telnet_port {s['telnet_port']}"]
+            argv += ["-c", f"tcl_port {s['tcl_port']}"]
             argv += ["-c", f"set CHIPNAME {self._target}"]
             argv += ["-f", MSPM0_TARGET_CFG]
         return argv
