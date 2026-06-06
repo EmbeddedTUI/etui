@@ -36,6 +36,21 @@ SECTIONS = {
 DEFAULT_LAYOUT = ["registers", "assembly", "stack", "backtrace"]
 TITLE_TO_NAME = {title: name for name, (title, _) in SECTIONS.items()}
 
+# Debug control buttons shown at the bottom of the dashboard panel.
+# (label, button id, lldb command). Frame nav refreshes the dashboard
+# directly since it does not trigger a stop event.
+CONTROLS = [
+    ("Cont", "ctl-continue", "continue"),
+    ("Next", "ctl-next", "next"),
+    ("Step", "ctl-step", "step"),
+    ("Finish", "ctl-finish", "finish"),
+    ("Halt", "ctl-halt", "process interrupt"),
+    ("Up", "ctl-up", "up"),
+    ("Down", "ctl-down", "down"),
+]
+CONTROL_CMDS = {bid: cmd for _, bid, cmd in CONTROLS}
+CONTROL_REFRESH = {"ctl-up", "ctl-down"}
+
 DASHBOARD_PATH = Path.home() / ".config" / "etui" / "dashboard.json"
 
 
@@ -145,6 +160,11 @@ class LldbTab(Horizontal):
     DEFAULT_CSS = """
         LldbTab #lldb-console { width: 1fr; }
         LldbTab #lldb-dashboard { width: 1fr; border-left: solid $accent; }
+        LldbTab #lldb-sections { height: 1fr; }
+        LldbTab #lldb-controls { height: 3; dock: bottom; }
+        LldbTab #lldb-controls Button {
+            min-width: 8; width: 1fr; margin: 0;
+        }
     """
 
     def __init__(self, port: int, arch: str | None = None):
@@ -163,11 +183,15 @@ class LldbTab(Horizontal):
         with Vertical(id="lldb-console"):
             yield LldbLog()
             yield Input(placeholder="lldb command", id="lldb-input")
-        with VerticalScroll(id="lldb-dashboard"):
-            for name in self._layout:
-                yield DashboardSection(
-                    name, SECTIONS[name][0], name in self._collapsed
-                )
+        with Vertical(id="lldb-dashboard"):
+            with VerticalScroll(id="lldb-sections"):
+                for name in self._layout:
+                    yield DashboardSection(
+                        name, SECTIONS[name][0], name in self._collapsed
+                    )
+            with Horizontal(id="lldb-controls"):
+                for label, bid, _cmd in CONTROLS:
+                    yield Button(label, id=bid)
 
     async def on_mount(self) -> None:
         await self.start()
@@ -198,8 +222,21 @@ class LldbTab(Horizontal):
         await self._install_stop_hook()
         await self.refresh_dashboard()
 
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        cmd = CONTROL_CMDS.get(event.button.id or "")
+        if cmd is None:
+            return
+        # Issue the command through the left console input so it flows the
+        # same way a typed command does (appears in the console, runs lldb).
+        console_input = self.query_one("#lldb-input", Input)
+        console_input.value = cmd
+        await console_input.action_submit()
+        # Frame navigation doesn't trigger a stop-hook; refresh manually.
+        if event.button.id in CONTROL_REFRESH:
+            await self.refresh_dashboard()
+
     async def _rebuild_sections(self) -> None:
-        container = self.query_one("#lldb-dashboard", VerticalScroll)
+        container = self.query_one("#lldb-sections", VerticalScroll)
         await container.remove_children()
         for name in self._layout:
             await container.mount(
