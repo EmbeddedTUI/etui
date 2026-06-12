@@ -39,6 +39,9 @@ PYOCD_FATAL_PATTERNS = [
     "not recognized",          # target type not in pyocd's built-in list
     "no pack installed",
     "pack not installed",
+    "invalid ap address",      # STM32F7 DebugDeviceUnlock failure
+    "error while initing target",
+    "debug sequence",
 ]
 
 # pyocd output patterns that indicate a missing CMSIS pack specifically.
@@ -112,6 +115,7 @@ def load_settings() -> dict:
 def save_settings(settings: dict) -> None:
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(settings, indent=2))
+
 
 
 class SettingsScreen(ModalScreen[dict | None]):
@@ -246,6 +250,7 @@ class ProbeTab(Horizontal):
                 yield Button("Stop", id="dbg-stop", variant="error")
                 yield Button("Kill stale", id="dbg-kill-stale", variant="warning")
                 yield Button("Install Pack", id="dbg-install-pack", variant="warning")
+                yield Button("Install stlink", id="dbg-install-stlink", variant="warning")
             yield ProbeLog()
             yield Input(placeholder="debugger command", id="dbg-input")
 
@@ -271,6 +276,8 @@ class ProbeTab(Horizontal):
             await self.kill_stale()
         elif event.button.id == "dbg-install-pack":
             await self._install_pack()
+        elif event.button.id == "dbg-install-stlink":
+            await self._install_stlink()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         command = event.value.strip()
@@ -434,12 +441,29 @@ class ProbeTab(Horizontal):
             probe_select.value = PROBE_AUTO
             self._probe = None
 
+        # Warn early if an ST-LINK was found but st-util is not installed.
+        has_stlink = any("st-link" in p["desc"].lower() or "stlink" in p["desc"].lower() for p in probes)
+        if has_stlink and not shutil.which("st-util"):
+            install_cmd = self._stlink_install_cmd()
+            log.write(
+                f"[yellow]ST-LINK detected but st-util not installed — "
+                f"needed as fallback if pyocd fails[/yellow]"
+            )
+            if install_cmd:
+                log.write(f"[yellow]install: {install_cmd}[/yellow]")
+            btn = self.query_one("#dbg-install-stlink", Button)
+            btn.display = True
+
     def _select_probe(self, probe_select: Select, uid: str) -> None:
         if probe_select.value != uid:
             probe_select.value = uid
         self._probe = self._probes.get(uid)
-        if self._probe and self._probe.get("driver") in BACKENDS:
-            self._backend = self._probe["driver"]
+        # Only force the backend when the probe requires a specific non-pyocd
+        # driver (e.g. XDS110 → openocd). For pyocd probes, respect whatever
+        # the user has selected — they may have deliberately chosen 'stlink'.
+        probe_driver = self._probe.get("driver") if self._probe else None
+        if probe_driver and probe_driver != "pyocd" and probe_driver in BACKENDS:
+            self._backend = probe_driver
             self.query_one("#dbg-backend", Select).value = self._backend
         # An XDS110 (OpenOCD) probe can drive several MCU families - ask the
         # user which one before connecting.
@@ -548,6 +572,7 @@ class ProbeTab(Horizontal):
 
     def on_mount(self) -> None:
         self.query_one("#dbg-install-pack", Button).display = False
+        self.query_one("#dbg-install-stlink", Button).display = False
 
     def on_unmount(self) -> None:
         # Avoid orphaned debugger processes holding the probe / ports.
@@ -603,6 +628,36 @@ class ProbeTab(Horizontal):
             log.write(f"[green]killed:[/green] {', '.join(map(str, killed))}")
         else:
             log.write("[yellow]no stale processes found[/yellow]")
+
+    @staticmethod
+    def _stlink_install_cmd() -> str:
+        """Return a platform-appropriate install command for stlink-tools."""
+        if shutil.which("apt-get"):
+            return "sudo apt-get install -y stlink-tools"
+        if shutil.which("dnf"):
+            return "sudo dnf install -y stlink"
+        if shutil.which("pacman"):
+            return "sudo pacman -S --noconfirm stlink"
+        if shutil.which("brew"):
+            return "brew install stlink"
+        return ""
+
+    async def _install_stlink(self) -> None:
+        """Send the stlink install command to the Console tab for the user to run."""
+        log = self.query_one(ProbeLog)
+        cmd = self._stlink_install_cmd()
+        if not cmd:
+            log.write("[red]no supported package manager found — install stlink manually[/red]")
+            return
+        if __package__:
+            from ..tabs.console import ConsoleTab
+        else:
+            from tabs.console import ConsoleTab
+        from textual.widgets import TabbedContent
+        self.app.query_one(TabbedContent).active = "console"
+        console_input = self.app.query_one("#console-input", Input)
+        console_input.value = cmd
+        console_input.focus()
 
     @staticmethod
     def _extract_target_from_line(text: str) -> str:
@@ -713,10 +768,15 @@ class ProbeTab(Horizontal):
                                 f"[yellow]hint: pyocd pack update && "
                                 f"pyocd pack install {target_name or '<target>'}[/yellow]"
                             )
+                        # Immediate stlink nudge for target init / AP failures.
+                        elif any(p in tl for p in ("invalid ap address", "error while initing target", "debug sequence")):
+                            log.write(
+                                "[yellow]pyocd cannot init this target — "
+                                "switch Backend to 'stlink' and press Start[/yellow]"
+                            )
                         break
         # Process exited — offer stlink fallback if pyocd failed.
-        if self._pyocd_failed and shutil.which("st-util"):
+        if self._pyocd_failed:
             log.write(
-                "[yellow]pyocd failed — 'stlink' backend available as fallback. "
-                "Select it in the Backend dropdown and press Start.[/yellow]"
+                "[yellow]pyocd failed — switch Backend to 'stlink' and press Start[/yellow]"
             )

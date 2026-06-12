@@ -185,11 +185,18 @@ class EtuiApp(App):
         await self.query_one(LldbTab).set_theme(
             self.settings_manager.get("lldb", "theme", "vibrant")
         )
-        if (
-            self.workspace_root
-            and self.settings_manager.get("workspace", "auto_restore", True)
-        ):
-            await self.set_workspace_root(self.workspace_root, update_files=True)
+        # Always start from the process CWD; offer to restore the previously
+        # saved workspace root if it still exists and differs from CWD.
+        saved = self.workspace_root
+        cwd = str(Path.cwd())
+        await self.set_workspace_root(cwd, update_files=True, persist=False)
+        if saved and Path(saved).is_dir() and saved != cwd:
+            self.notify(
+                f"Previous workspace: {saved}",
+                title="Restore workspace?",
+                timeout=12,
+                action="restore_workspace",
+            )
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -414,6 +421,11 @@ class EtuiApp(App):
 
     async def on_repository_changed(self, message: RepositoryChanged) -> None:
         await self.set_workspace_root(message.path, update_files=True)
+
+    async def action_restore_workspace(self) -> None:
+        saved = self.settings_manager.get("workspace", "root")
+        if saved and Path(saved).is_dir():
+            await self.set_workspace_root(saved, update_files=True)
 
     
 

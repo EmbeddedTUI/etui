@@ -106,6 +106,8 @@ class ConsoleTab(Horizontal):
             return
 
         async with self._command_lock:
+            if not self.cwd.is_dir():
+                self.cwd = Path.cwd()
             log.write(f"[bold cyan]xonsh>[/bold cyan] {command}")
             cwd_marker = f"{CWD_MARKER}{uuid4().hex}:"
             wrapped_command = (
