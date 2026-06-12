@@ -71,6 +71,22 @@ class ToolResult:
 
 TOOL_CATALOG = (
     ToolDefinition(
+        tool_id="stlink",
+        display_name="stlink / st-util",
+        probes=(
+            ExecutableProbe("st-util",  ("--version",)),
+            ExecutableProbe("st-flash", ("--version",)),
+            ExecutableProbe("st-info",  ("--version",)),
+        ),
+        documentation_url="https://github.com/stlink-org/stlink",
+        package_plans={
+            "apt":    PackagePlan("apt-get", ("stlink-tools",), "https://github.com/stlink-org/stlink"),
+            "dnf":    PackagePlan("dnf",     ("stlink",),       "https://github.com/stlink-org/stlink"),
+            "pacman": PackagePlan("pacman",  ("stlink",),       "https://github.com/stlink-org/stlink"),
+            "brew":   PackagePlan("brew",    ("stlink",),       "https://github.com/stlink-org/stlink"),
+        },
+    ),
+    ToolDefinition(
         tool_id="openocd",
         display_name="OpenOCD",
         probes=(ExecutableProbe("openocd", ("--version",)),),

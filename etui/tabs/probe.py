@@ -20,10 +20,23 @@ from textual.widgets import Select
 # Available debugger backends: label -> command line (argv) launched as a
 # line-oriented interactive console driven over stdin/stdout.
 BACKENDS = {
-    "pyocd": ["pyocd", "commander"],
+    "pyocd":   ["pyocd", "commander"],
     "openocd": ["openocd"],
-    "gdb": ["gdb", "--quiet", "--interpreter=mi2"],
+    "stlink":  ["st-util"],
+    "gdb":     ["gdb", "--quiet", "--interpreter=mi2"],
 }
+
+# Default GDB server port for st-util (OpenOCD uses 3333).
+STLINK_GDB_PORT = 4242
+
+# pyocd output patterns that indicate a fatal connection failure.
+PYOCD_FATAL_PATTERNS = [
+    "error: failed to open",
+    "no connected probes",
+    "failed to connect",
+    "unable to open",
+    "usb error",
+]
 
 # Sentinel values for the Select widgets.
 PROBE_AUTO = "__auto__"
@@ -43,13 +56,18 @@ TARGETS = {
 }
 MSPM0_TARGET_CFG = "target/ti/mspm0.cfg"
 
-# Known debug probes identified purely by USB VID:PID. This catches the
-# XDS110 in its native (non-CMSIS-DAP) firmware mode, which pyocd cannot
-# enumerate itself. (vid, pid) -> (description, driver, interface_cfg)
+# Known debug probes identified purely by USB VID:PID. This catches probes
+# that pyocd cannot enumerate itself (e.g. TI XDS110 in native firmware mode).
+# ST-LINK entries use driver="pyocd" (primary); st-util is the manual fallback.
+# (vid, pid) -> (description, driver, interface_cfg)
 KNOWN_USB_PROBES = {
     (0x0451, 0xBEF3): ("TI XDS110 (LaunchPad)", "openocd", XDS110_NATIVE),
-    (0x0451, 0xBEF4): ("TI XDS110", "openocd", XDS110_NATIVE),
-    (0x1CBE, 0x00FD): ("TI XDS110", "openocd", XDS110_NATIVE),
+    (0x0451, 0xBEF4): ("TI XDS110",             "openocd", XDS110_NATIVE),
+    (0x1CBE, 0x00FD): ("TI XDS110",             "openocd", XDS110_NATIVE),
+    (0x0483, 0x3748): ("ST-LINK/V2",             "pyocd",   None),
+    (0x0483, 0x374b): ("ST-LINK/V2.1",           "pyocd",   None),
+    (0x0483, 0x374e): ("ST-LINK/V3",             "pyocd",   None),
+    (0x0483, 0x374f): ("ST-LINK/V3E",            "pyocd",   None),
 }
 
 
@@ -61,6 +79,7 @@ DEFAULT_SETTINGS = {
     "gdb_port": 3333,
     "telnet_port": 4444,
     "tcl_port": 6666,
+    "stlink_gdb_port": STLINK_GDB_PORT,
 }
 
 SETTINGS_PATH = Path.home() / ".config" / "etui" / "debugger.json"
@@ -176,6 +195,8 @@ class ProbeTab(Horizontal):
         self._settings = load_settings()
         # Whether the LLDB tab has been opened for the current session.
         self._lldb_opened = False
+        # Set when pyocd exits with a fatal error so the UI can suggest stlink.
+        self._pyocd_failed = False
 
     def compose(self) -> ComposeResult:
         if __package__:
@@ -347,17 +368,20 @@ class ProbeTab(Horizontal):
 
     @staticmethod
     def _classify(desc: str) -> tuple[str, str | None]:
-        """ Pick a backend + OpenOCD interface from a pyocd probe description.
+        """Pick a backend + OpenOCD interface from a pyocd probe description.
 
-        pyocd can enumerate an XDS110 running CMSIS-DAP firmware but cannot
-        target TI MSPM0/CC13x2 devices, so route the XDS110 to OpenOCD using
-        the matching interface. Anything else stays on pyocd.
+        XDS110 probes are routed to OpenOCD (pyocd cannot target TI MSPM0).
+        ST-LINK probes are kept on pyocd (native support); st-util is the
+        manual fallback the user can select via the Backend dropdown.
+        Everything else also stays on pyocd.
         """
         d = desc.lower()
         if "xds110" in d:
             if "cmsis-dap" in d or "cmsis dap" in d:
                 return "openocd", XDS110_CMSISDAP
             return "openocd", XDS110_NATIVE
+        if "st-link" in d or "stlink" in d:
+            return "pyocd", None
         return "pyocd", None
 
     async def detect_probes(self) -> None:
@@ -450,6 +474,12 @@ class ProbeTab(Horizontal):
             argv += ["-c", f"tcl port {s['tcl_port']}"]
             argv += ["-c", f"set CHIPNAME {self._target}"]
             argv += ["-f", MSPM0_TARGET_CFG]
+        elif backend == "stlink":
+            port = self._settings.get("stlink_gdb_port", STLINK_GDB_PORT)
+            argv += ["--port", str(port)]
+            if self._probe and self._probe.get("uid"):
+                argv += ["--serial", self._probe["uid"]]
+            argv += ["--verbose"]
         return argv
 
     async def start(self) -> None:
@@ -465,6 +495,13 @@ class ProbeTab(Horizontal):
                 primary_exe = res.executables[0] if res.executables else None
                 if primary_exe and primary_exe.path:
                     backend_exe = primary_exe.path
+        elif self._backend == "stlink" and hasattr(self.app, "tool_registry"):
+            res = self.app.tool_registry.get_result("stlink")
+            if res and res.state.value == "Installed":
+                for exe in res.executables:
+                    if exe.name == "st-util" and exe.path:
+                        backend_exe = exe.path
+                        break
         elif self._backend == "gdb" and hasattr(self.app, "tool_registry"):
             res = self.app.tool_registry.get_result("gnu-arm")
             if res and res.state.value == "Installed":
@@ -520,7 +557,7 @@ class ProbeTab(Horizontal):
                 name = (proc.info.get("name") or "").lower()
                 if proc.pid == own_pid:
                     continue
-                if "openocd" in name or "pyocd" in name:
+                if "openocd" in name or "pyocd" in name or "st-util" in name:
                     proc.terminate()
                     killed.append(proc.pid)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -562,21 +599,42 @@ class ProbeTab(Horizontal):
     async def _read_output(self) -> None:
         log = self.query_one(ProbeLog)
         assert self._proc is not None and self._proc.stdout is not None
+        self._pyocd_failed = False
         while True:
             line = await self._proc.stdout.readline()
             if not line:
                 break
             text = line.decode(errors="replace").rstrip()
             log.write(text)
-            # Once the gdb server is listening, open the LLDB tab.
+            tl = text.lower()
+            # OpenOCD: GDB server ready.
             if (
                 not self._lldb_opened
                 and self._backend == "openocd"
-                and "for gdb connections" in text.lower()
+                and "for gdb connections" in tl
             ):
                 self._lldb_opened = True
-                # Pass the selected target's architecture so lldb does not
-                # probe bogus memory while auto-detecting on connect.
                 self.post_message(
                     LldbStart(self._settings["gdb_port"], self._target_arch)
                 )
+            # st-util: GDB server ready.
+            elif (
+                not self._lldb_opened
+                and self._backend == "stlink"
+                and "listening" in tl
+            ):
+                self._lldb_opened = True
+                port = self._settings.get("stlink_gdb_port", STLINK_GDB_PORT)
+                self.post_message(LldbStart(port, self._target_arch))
+            # pyocd: track fatal errors so we can suggest stlink on exit.
+            elif self._backend == "pyocd":
+                for pat in PYOCD_FATAL_PATTERNS:
+                    if pat in tl:
+                        self._pyocd_failed = True
+                        break
+        # Process exited — offer stlink fallback if pyocd failed.
+        if self._pyocd_failed and shutil.which("st-util"):
+            log.write(
+                "[yellow]pyocd failed — 'stlink' backend available as fallback. "
+                "Select it in the Backend dropdown and press Start.[/yellow]"
+            )

@@ -168,6 +168,37 @@ def test_screenshot_dir_is_inside_doc() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tests — probe tab
+# ---------------------------------------------------------------------------
+
+def test_stlink_vids_in_known_usb_probes() -> None:
+    from etui.tabs.probe import KNOWN_USB_PROBES
+    stlink_pids = {0x3748, 0x374b, 0x374e, 0x374f}
+    found = {pid for (vid, pid), _ in KNOWN_USB_PROBES.items() if vid == 0x0483}
+    missing = stlink_pids - found
+    assert not missing, f"ST-LINK VID:PIDs missing from KNOWN_USB_PROBES: {missing:#06x}"
+
+
+def test_stlink_usb_probes_use_pyocd_driver() -> None:
+    from etui.tabs.probe import KNOWN_USB_PROBES
+    for (vid, pid), (desc, driver, _) in KNOWN_USB_PROBES.items():
+        if vid == 0x0483:
+            assert driver == "pyocd", f"{desc} should use pyocd driver, got {driver!r}"
+
+
+def test_stlink_backend_registered() -> None:
+    from etui.tabs.probe import BACKENDS
+    assert "stlink" in BACKENDS, "stlink missing from BACKENDS"
+    assert BACKENDS["stlink"][0] == "st-util", "stlink backend should invoke st-util"
+
+
+def test_stlink_gdb_port_in_default_settings() -> None:
+    from etui.tabs.probe import DEFAULT_SETTINGS, STLINK_GDB_PORT
+    assert "stlink_gdb_port" in DEFAULT_SETTINGS, "stlink_gdb_port missing from DEFAULT_SETTINGS"
+    assert DEFAULT_SETTINGS["stlink_gdb_port"] == STLINK_GDB_PORT
+
+
+# ---------------------------------------------------------------------------
 # Tests — tab registry
 # ---------------------------------------------------------------------------
 
