@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to create (e.g., v0.1.0)'
+        required: true
 
 jobs:
   build:
@@ -77,9 +82,13 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh release create ${{ github.ref_name }} \
+        TAG_NAME="${{ github.event.inputs.version }}"
+        if [ -z "$TAG_NAME" ]; then
+          TAG_NAME="${{ github.ref_name }}"
+        fi
+        gh release create "$TAG_NAME" \
           artifacts/etui-ubuntu-latest/etui-linux \
           artifacts/etui-macos-latest/etui-macos \
           artifacts/etui-windows-latest/etui-windows.exe \
-          --title "Release ${{ github.ref_name }}" \
+          --title "Release $TAG_NAME" \
           --generate-notes
