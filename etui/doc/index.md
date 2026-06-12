@@ -28,6 +28,13 @@
 3. Connect a debug probe, then use the **Probe** tab to start the GDB server.
 4. Open the **LLDB** tab to attach and start debugging.
 
+## Probe Guides
+
+| Probe | Guide |
+|-------|-------|
+| TI XDS110 | [XDS110 setup and troubleshooting](probes/xds110.md) |
+| ST-LINK | [ST-LINK setup and troubleshooting](probes/stlink.md) |
+
 ## Screenshots
 
 Screenshots of each tab can be regenerated from the **About** tab using the *Capture Screenshots* button. They are saved as SVG files in `doc/screenshots/`.

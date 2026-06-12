@@ -24,6 +24,11 @@ Connect a hardware debug probe, start a GDB server, and launch a debug session.
 
 MSPM0L, MSPM0G, MSPM0C (TI Arm Cortex-M0+ family). Target support is driven by OpenOCD config files.
 
+## Probe Guides
+
+- [TI XDS110](../probes/xds110.md)
+- [ST-LINK](../probes/stlink.md)
+
 ## Usage
 
 1. Plug in a debug probe. The probe dropdown auto-populates with detected USB probes.
