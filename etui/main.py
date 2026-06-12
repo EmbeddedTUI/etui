@@ -1,6 +1,8 @@
 # Copyright (c) 2026 Pawel Wodnicki
 # Copyright (c) 2026 32bitmico LLC
 
+import sys
+
 
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header
@@ -184,6 +186,12 @@ class EtuiApp(App):
     
 
 def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == "--etui-xonsh-command":
+        from xonsh.main import main as xonsh_main
+
+        xonsh_main(["--no-rc", "-c", sys.argv[2]])
+        return
+
     print("Hello from etui!")
     app = EtuiApp()
     app.run()
