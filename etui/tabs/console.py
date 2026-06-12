@@ -7,7 +7,7 @@ import contextlib
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical
-from textual.widgets import RichLog
+from textual.widgets import RichLog, Label, Input
 
 # Lazy-loaded xonsh resources
 _execer = None
@@ -77,9 +77,49 @@ class TextualLogStream:
 class ConsoleTab(Horizontal):
     """ Console tab powered by xonsh """
 
+    DEFAULT_CSS = """
+    ConsoleTab {
+        height: 1fr;
+    }
+    ConsoleTab Vertical {
+        height: 1fr;
+    }
+    ConsoleTab LogWidget {
+        height: 1fr;
+    }
+    ConsoleTab #console-input-line {
+        height: 1;
+        background: transparent;
+        padding: 0 1;
+    }
+    ConsoleTab #console-input-line Label {
+        width: auto;
+        padding: 0;
+        margin: 0;
+    }
+    ConsoleTab #console-input {
+        width: 1fr;
+        height: 1;
+        border: none;
+        background: transparent;
+        padding: 0;
+        margin: 0;
+    }
+    """
+
     def compose(self) -> ComposeResult:
         with Vertical():
             yield LogWidget()
+            with Horizontal(id="console-input-line"):
+                yield Label("[bold cyan]xonsh>[/bold cyan] ")
+                yield Input(id="console-input")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "console-input":
+            command = event.value.strip()
+            if command:
+                event.input.value = ""
+                self.run_worker(self.run_command(command))
 
     def on_mount(self) -> None:
         try:

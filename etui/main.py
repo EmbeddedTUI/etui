@@ -39,7 +39,11 @@ class EtuiApp(App):
         }
 
         Input {
-            height: 3
+            height: 3;
+        }
+
+        #main-input {
+            display: none;
         }
 
         /* Push the About tab (last one) to the far right of the tab bar. */
@@ -115,12 +119,24 @@ class EtuiApp(App):
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         # Focus the appropriate input/widget when tabs are switched
         pane_id = event.pane.id
+        
+        # Show main-input only for serial tab, hide for all others
+        try:
+            self.query_one("#main-input").display = (pane_id == "serial")
+        except Exception:
+            pass
+
         if pane_id == "files":
             try:
                 self.query_one("LeftWidget").focus()
             except Exception:
                 pass
-        elif pane_id in ("console", "serial"):
+        elif pane_id == "console":
+            try:
+                self.query_one("#console-input").focus()
+            except Exception:
+                pass
+        elif pane_id == "serial":
             try:
                 self.query_one("#main-input").focus()
             except Exception:
