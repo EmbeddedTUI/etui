@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python3 etui/main.py
+pdm run python etui/main.py

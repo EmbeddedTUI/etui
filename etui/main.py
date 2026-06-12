@@ -47,7 +47,7 @@ class EtuiApp(App):
         }
 
         /* Push the About tab (last one) to the far right of the tab bar. */
-        Tabs Tab:last-of-type {
+        #--content-tab-about {
             dock: right;
         }
 
