@@ -11,9 +11,9 @@ from textual.widgets import Select
 from textual.widgets import Static
 
 if __package__:
-    from .lldb import THEMES, load_config, save_theme
+    from .lldb import THEMES, load_config
 else:
-    from lldb import THEMES, load_config, save_theme
+    from lldb import THEMES, load_config
 
 
 class ThemeChanged(Message):
@@ -61,8 +61,14 @@ class ThemeTab(Vertical):
         ThemeTab #theme-preview { padding: 1 2; }
     """
 
+    def __init__(self, current_theme: str | None = None) -> None:
+        super().__init__()
+        self.current_theme = current_theme
+
     def compose(self) -> ComposeResult:
-        current = load_config()[2]
+        current = self.current_theme or load_config()[2]
+        if current not in THEMES:
+            current = "vibrant"
         with Horizontal(id="theme-bar"):
             yield Label("Dashboard theme:  ", id="theme-label")
             yield Select(
@@ -77,6 +83,5 @@ class ThemeTab(Vertical):
         if event.select.id != "theme-select":
             return
         theme = str(event.value)
-        save_theme(theme)
         self.query_one("#theme-preview", Static).update(_preview(THEMES[theme]))
         self.post_message(ThemeChanged(theme))

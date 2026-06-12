@@ -4,7 +4,6 @@
 import os
 import shutil
 import signal
-import json
 import asyncio
 from pathlib import Path
 from dataclasses import dataclass
@@ -445,16 +444,15 @@ class ToolsTab(Vertical):
     }
     """
 
-    def __init__(self) -> None:
+    def __init__(self, custom_paths: list[Path] | None = None) -> None:
         super().__init__()
         self.results: dict[str, ToolResult] = {}
         self.selected_tool_id: str | None = None
-        self.custom_paths: list[Path] = []
+        self.custom_paths = list(custom_paths or [])
         self.busy = False
         self._active_subprocess: asyncio.subprocess.Process | None = None
         self._operation_worker: Worker[None] | None = None
-        self.service = ToolService(tuple())
-        self._load_custom_paths()
+        self.service = ToolService(tuple(self.custom_paths))
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="tools-toolbar"):
@@ -487,26 +485,13 @@ class ToolsTab(Vertical):
     async def on_unmount(self) -> None:
         await self.cancel_active_operation()
 
-    def _load_custom_paths(self) -> None:
-        # Load configuration from app scratch directory to bypass system root limits
-        scratch_dir = Path("/home/pawel/.gemini/antigravity-cli/scratch")
-        scratch_dir.mkdir(parents=True, exist_ok=True)
-        config_file = scratch_dir / "tools_config.json"
-        
-        if config_file.is_file():
-            try:
-                paths_data = json.loads(config_file.read_text())
-                self.custom_paths = [Path(p) for p in paths_data]
-            except Exception:
-                pass
-        self.service = ToolService(tuple(self.custom_paths))
-
     def _save_custom_paths(self) -> None:
-        scratch_dir = Path("/home/pawel/.gemini/antigravity-cli/scratch")
-        config_file = scratch_dir / "tools_config.json"
         try:
-            paths_data = [str(p) for p in self.custom_paths]
-            config_file.write_text(json.dumps(paths_data))
+            manager = getattr(self.app, "settings_manager", None)
+            if manager is not None:
+                manager.set(
+                    "tools", "custom_paths", [str(path) for path in self.custom_paths]
+                )
         except Exception:
             pass
 

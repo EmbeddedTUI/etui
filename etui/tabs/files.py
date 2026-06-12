@@ -135,6 +135,12 @@ class FilesTab(Vertical):
             await self.app.set_workspace_root(str(path))
             self.notify(f"Workspace root set to {path}")
 
+    def open_file(self, path: Path) -> None:
+        """Display *path* in the viewer without changing the directory tree root."""
+        self.current_path = path
+        self.view_mode = "content"
+        self.render_file()
+
     def render_file(self) -> None:
         if not self.current_path:
             return

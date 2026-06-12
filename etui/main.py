@@ -6,12 +6,13 @@ from pathlib import Path
 
 
 from textual.app import App, ComposeResult
-from textual.widgets import Footer, Header
+from textual.widgets import Footer, Header, RichLog
 from textual.widgets import Input
 from textual.widgets import TabbedContent, TabPane
 from textual.message import Message
 
 if __package__:
+    from .tabs.help import HelpTab, OpenDocFile
     from .tabs.about import AboutTab
     from .tabs.console import ConsoleTab
     from .tabs.files import FilesTab
@@ -24,7 +25,10 @@ if __package__:
     from .tabs.github import GitHubTab
     from .tabs.cmake import CMakeTab
     from .tabs.tools import ToolsTab
+    from .tabs.settings import SettingsTab
+    from .settings import SettingsManager
 else:
+    from tabs.help import HelpTab, OpenDocFile
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
     from tabs.files import FilesTab
@@ -37,6 +41,8 @@ else:
     from tabs.github import GitHubTab
     from tabs.cmake import CMakeTab
     from tabs.tools import ToolsTab
+    from tabs.settings import SettingsTab
+    from settings import SettingsManager
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -52,6 +58,7 @@ class EtuiApp(App):
             from .tabs.tools import ToolRegistry
         else:
             from tabs.tools import ToolRegistry
+        self.settings_manager = SettingsManager()
         self.tool_registry = ToolRegistry(self)
         self._last_active_tab = "files"
         self.workspace_root = self.load_workspace_root()
@@ -105,28 +112,20 @@ class EtuiApp(App):
     """
 
     def load_workspace_root(self) -> str | None:
-        import json
-        config_file = Path.home() / ".config" / "etui" / "workspace.json"
-        if config_file.is_file():
-            try:
-                data = json.loads(config_file.read_text())
-                return data.get("workspace_root")
-            except Exception:
-                pass
-        return None
+        return self.settings_manager.get("workspace", "root") or None
 
     def save_workspace_root(self, path: str) -> None:
-        config_dir = Path.home() / ".config" / "etui"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        config_file = config_dir / "workspace.json"
         try:
-            config_file.write_text(json.dumps({"workspace_root": path}))
-        except Exception:
+            self.settings_manager.set("workspace", "root", path)
+        except OSError:
             pass
 
-    async def set_workspace_root(self, path: str, update_files=True) -> None:
+    async def set_workspace_root(
+        self, path: str, update_files: bool = True, persist: bool = True
+    ) -> None:
         self.workspace_root = path
-        self.save_workspace_root(path)
+        if persist:
+            self.save_workspace_root(path)
         
         # 1. Update Files tab
         if update_files:
@@ -149,7 +148,7 @@ class EtuiApp(App):
             venv_tab = self.query_one(VenvTab)
             venv_tab.query_one("#venv-project-path", Input).value = path
             if (Path(path) / "pyproject.toml").is_file():
-                self.run_worker(venv_tab._select_project())
+                venv_tab.start_project_selection()
         except Exception:
             pass
 
@@ -177,7 +176,18 @@ class EtuiApp(App):
             pass
 
     async def on_mount(self) -> None:
-        if self.workspace_root:
+        probe_tab = self.query_one(ProbeTab)
+        probe_tab.apply_settings(self.settings_manager.settings["probe"])
+        wrap = bool(self.settings_manager.get("ui", "word_wrap", False))
+        for log in self.query(RichLog):
+            log.wrap = wrap
+        await self.query_one(LldbTab).set_theme(
+            self.settings_manager.get("lldb", "theme", "vibrant")
+        )
+        if (
+            self.workspace_root
+            and self.settings_manager.get("workspace", "auto_restore", True)
+        ):
             await self.set_workspace_root(self.workspace_root, update_files=True)
 
     def compose(self) -> ComposeResult:
@@ -188,7 +198,14 @@ class EtuiApp(App):
             with TabPane("Console", id="console"):
                 yield ConsoleTab()
             with TabPane("Tools", id="tools"):
-                yield ToolsTab()
+                yield ToolsTab(
+                    [
+                        Path(path)
+                        for path in self.settings_manager.get(
+                            "tools", "custom_paths", []
+                        )
+                    ]
+                )
             with TabPane("Git", id="git"):
                 yield GitTab()
             with TabPane("GitHub", id="github"):
@@ -200,13 +217,19 @@ class EtuiApp(App):
             with TabPane("Probe", id="probe"):
                 yield ProbeTab()
             with TabPane("LLDB", id="lldb"):
-                yield LldbTab()
+                yield LldbTab(settings=self.settings_manager.settings["lldb"])
             with TabPane("Venv", id="venv"):
                 yield VenvTab()
+            with TabPane("Settings", id="settings"):
+                yield SettingsTab()
             with TabPane("Theme", id="theme"):
-                yield ThemeTab()
+                yield ThemeTab(
+                    self.settings_manager.get("lldb", "theme", "vibrant")
+                )
             with TabPane("About", id="about"):
                 yield AboutTab()
+            with TabPane("Help", id="help"):
+                yield HelpTab()
         yield Input(id="main-input")
         yield Footer()
 
@@ -227,7 +250,15 @@ class EtuiApp(App):
         await lldb.connect(message.port, message.arch)
         self.query_one(TabbedContent).active = "lldb"
 
+    def on_open_doc_file(self, message: OpenDocFile) -> None:
+        self.query_one(TabbedContent).active = "files"
+        self.query_one(FilesTab).open_file(message.path)
+
     async def on_theme_changed(self, message: ThemeChanged) -> None:
+        try:
+            self.settings_manager.set("lldb", "theme", message.theme)
+        except OSError:
+            pass
         await self.query_one(LldbTab).set_theme(message.theme)
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
@@ -301,6 +332,11 @@ class EtuiApp(App):
         elif pane_id == "venv":
             try:
                 self.query_one("#venv-project-path").focus()
+            except Exception:
+                pass
+        elif pane_id == "settings":
+            try:
+                self.query_one("#settings-categories").focus()
             except Exception:
                 pass
 
@@ -387,9 +423,43 @@ def main():
         xonsh_main(["--no-rc", "-c", sys.argv[2]])
         return
 
+    if len(sys.argv) >= 2 and sys.argv[1] == "--screenshots":
+        _run_screenshots(Path(sys.argv[2]) if len(sys.argv) >= 3 else None)
+        return
+
     print("Hello from etui!")
     app = EtuiApp()
     app.run()
+
+
+def _run_screenshots(output_dir: Path | None) -> None:
+    """Run the app, capture one screenshot per tab, print results, then exit."""
+    if __package__:
+        from .tabs.about import capture_screenshots, DEFAULT_SCREENSHOT_DIR
+    else:
+        from tabs.about import capture_screenshots, DEFAULT_SCREENSHOT_DIR
+
+    dest = output_dir or DEFAULT_SCREENSHOT_DIR
+    results: dict[str, object] = {}
+
+    app = EtuiApp()
+
+    async def _after_mount() -> None:
+        saved, failed = await capture_screenshots(app, dest)
+        results["saved"] = saved
+        results["failed"] = failed
+        app.exit()
+
+    app.call_after_refresh(_after_mount)
+    app.run()
+
+    saved = results.get("saved", [])
+    failed = results.get("failed", [])
+    for tab_id in saved:
+        print(f"  saved  {dest / (tab_id + '.svg')}")
+    for entry in failed:
+        print(f"  FAILED {entry}", file=sys.stderr)
+    print(f"{len(saved)} screenshots written to {dest}")
 
 if __name__ == "__main__":
     main()

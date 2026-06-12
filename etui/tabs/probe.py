@@ -247,12 +247,48 @@ class ProbeTab(Horizontal):
             if result is None:
                 return
             self._settings = result
-            save_settings(result)
+            manager = getattr(self.app, "settings_manager", None)
+            if manager is not None:
+                try:
+                    for key, value in result.items():
+                        manager.settings["probe"][key] = value
+                    manager.save_settings()
+                except OSError:
+                    pass
+                settings_path = manager.path
+            else:
+                save_settings(result)
+                settings_path = SETTINGS_PATH
             self.query_one(ProbeLog).write(
-                f"[green]settings saved[/green] [dim]{SETTINGS_PATH}[/dim]"
+                f"[green]settings saved[/green] [dim]{settings_path}[/dim]"
             )
 
         self.app.push_screen(SettingsScreen(dict(self._settings)), _on_close)
+
+    def apply_settings(self, settings: dict) -> None:
+        """Apply unified settings to the mounted probe controls."""
+        self._backend = str(settings.get("backend", "pyocd"))
+        self._settings = {
+            key: settings.get(key, default)
+            for key, default in DEFAULT_SETTINGS.items()
+        }
+        try:
+            self.query_one("#dbg-backend", Select).value = self._backend
+        except Exception:
+            pass
+
+        target = str(settings.get("target", "")).upper()
+        target_label = next(
+            (label for label in TARGETS if target.startswith(label)),
+            TARGET_NONE,
+        )
+        if target_label != TARGET_NONE:
+            self._target, self._target_arch = TARGETS[target_label]
+        try:
+            target_select = self.query_one("#dbg-target", Select)
+            target_select.value = target_label
+        except Exception:
+            pass
 
     @staticmethod
     def _list_probes() -> list[dict]:

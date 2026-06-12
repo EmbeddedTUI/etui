@@ -76,6 +76,7 @@ class VenvTab(Vertical):
         self._cancel_requested = False
         self._active_subprocess: asyncio.subprocess.Process | None = None
         self._operation_worker: Worker[None] | None = None
+        self._selection_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="venv-project-select"):
@@ -141,6 +142,8 @@ class VenvTab(Vertical):
         self._set_status("Select an external PDM project to begin.")
 
     async def on_unmount(self) -> None:
+        if self._selection_worker is not None:
+            self._selection_worker.cancel()
         await self.cancel_active_operation()
         if self._operation_worker is not None:
             self._operation_worker.cancel()
@@ -176,13 +179,22 @@ class VenvTab(Vertical):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
         if button_id == "venv-open-project":
-            await self._select_project()
+            self.start_project_selection()
         elif button_id == "venv-cancel":
             await self.cancel_active_operation()
         elif button_id == "venv-update-all":
             self._start_mutation("update")
         elif button_id in {"venv-add", "venv-remove"}:
             self._start_package_mutation(button_id)
+
+    def start_project_selection(self) -> None:
+        self._selection_worker = self.run_worker(
+            self._select_project(),
+            name="pdm-select-project",
+            group="venv-selection",
+            exclusive=True,
+            exit_on_error=False,
+        )
 
     async def _select_project(self) -> None:
         if self._busy:
@@ -403,12 +415,20 @@ class VenvTab(Vertical):
             )
         except OSError as error:
             return 127, "", str(error)
-        stdout, stderr = await process.communicate()
-        return (
-            process.returncode or 0,
-            stdout.decode(errors="replace"),
-            stderr.decode(errors="replace"),
-        )
+        self._active_subprocess = process
+        try:
+            stdout, stderr = await process.communicate()
+            return (
+                process.returncode or 0,
+                stdout.decode(errors="replace"),
+                stderr.decode(errors="replace"),
+            )
+        except asyncio.CancelledError:
+            await self._terminate_active_subprocess()
+            raise
+        finally:
+            if self._active_subprocess is process:
+                self._active_subprocess = None
 
     def _invalidate_project(self, message: str) -> None:
         self.project_path = None

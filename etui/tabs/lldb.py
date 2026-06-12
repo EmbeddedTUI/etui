@@ -255,7 +255,12 @@ class LldbTab(Horizontal):
         }
     """
 
-    def __init__(self, port: int | None = None, arch: str | None = None):
+    def __init__(
+        self,
+        port: int | None = None,
+        arch: str | None = None,
+        settings: dict | None = None,
+    ):
         super().__init__()
         self._port = port
         self._arch = arch
@@ -266,7 +271,18 @@ class LldbTab(Horizontal):
         self._last_data: dict[str, list[str]] = {}
         # Previous values per section, used to highlight what changed.
         self._prev: dict[str, dict] = {}
-        self._layout, self._collapsed, self._theme_name = load_config()
+        if settings is None:
+            self._layout, self._collapsed, self._theme_name = load_config()
+        else:
+            layout = [
+                name for name in settings.get("layout", []) if name in SECTIONS
+            ]
+            self._layout = layout or list(DEFAULT_LAYOUT)
+            self._collapsed = [
+                name for name in settings.get("collapsed", []) if name in SECTIONS
+            ]
+            theme = str(settings.get("theme", DEFAULT_THEME))
+            self._theme_name = theme if theme in THEMES else DEFAULT_THEME
         self._theme = THEMES[self._theme_name]
         self._stop_hook_id: int | None = None
 
@@ -332,7 +348,7 @@ class LldbTab(Horizontal):
             self._collapsed.append(message.name)
         elif not message.collapsed and message.name in self._collapsed:
             self._collapsed.remove(message.name)
-        save_config(self._layout, self._collapsed, self._theme_name)
+        self._persist_config()
 
     async def on_section_move(self, message: SectionMove) -> None:
         i = self._layout.index(message.name)
@@ -340,10 +356,27 @@ class LldbTab(Horizontal):
         if not (0 <= j < len(self._layout)):
             return
         self._layout[i], self._layout[j] = self._layout[j], self._layout[i]
-        save_config(self._layout, self._collapsed, self._theme_name)
+        self._persist_config()
         await self._rebuild_sections()
         await self._install_stop_hook()
         await self.refresh_dashboard()
+
+    def _persist_config(self) -> None:
+        manager = getattr(self.app, "settings_manager", None)
+        if manager is None:
+            save_config(self._layout, self._collapsed, self._theme_name)
+            return
+        manager.settings["lldb"].update(
+            {
+                "layout": list(self._layout),
+                "collapsed": list(self._collapsed),
+                "theme": self._theme_name,
+            }
+        )
+        try:
+            manager.save_settings()
+        except OSError:
+            pass
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "ctl-restart":
