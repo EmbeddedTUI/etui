@@ -53,6 +53,7 @@ class EtuiApp(App):
         else:
             from tabs.tools import ToolRegistry
         self.tool_registry = ToolRegistry(self)
+        self._last_active_tab = "files"
 
 
     CSS = """
@@ -151,6 +152,8 @@ class EtuiApp(App):
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         # Focus the appropriate input/widget when tabs are switched
         pane_id = event.pane.id
+        old_pane_id = getattr(self, "_last_active_tab", None)
+        self._last_active_tab = pane_id
         
         # Show main-input only for serial tab, hide for all others
         try:
@@ -220,16 +223,19 @@ class EtuiApp(App):
             except Exception:
                 pass
 
-        if pane_id != "venv":
-            venv_tab = self.query_one(VenvTab)
-            if venv_tab.is_busy:
-                self.run_worker(
-                    venv_tab.cancel_active_operation(),
-                    name="cancel-venv-operation",
-                    exit_on_error=False,
-                )
+        if old_pane_id == "venv" and pane_id != "venv":
+            try:
+                venv_tab = self.query_one(VenvTab)
+                if venv_tab.is_busy:
+                    self.run_worker(
+                        venv_tab.cancel_active_operation(),
+                        name="cancel-venv-operation",
+                        exit_on_error=False,
+                    )
+            except Exception:
+                pass
 
-        if pane_id != "git":
+        if old_pane_id == "git" and pane_id != "git":
             try:
                 git_tab = self.query_one(GitTab)
                 if git_tab.busy:
@@ -241,7 +247,7 @@ class EtuiApp(App):
             except Exception:
                 pass
 
-        if pane_id != "github":
+        if old_pane_id == "github" and pane_id != "github":
             try:
                 github_tab = self.query_one(GitHubTab)
                 if github_tab.busy:
@@ -253,7 +259,7 @@ class EtuiApp(App):
             except Exception:
                 pass
 
-        if pane_id != "cmake":
+        if old_pane_id == "cmake" and pane_id != "cmake":
             try:
                 cmake_tab = self.query_one(CMakeTab)
                 if cmake_tab.busy:
@@ -265,7 +271,7 @@ class EtuiApp(App):
             except Exception:
                 pass
 
-        if pane_id != "tools":
+        if old_pane_id == "tools" and pane_id != "tools":
             try:
                 tools_tab = self.query_one(ToolsTab)
                 if tools_tab.busy:

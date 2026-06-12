@@ -414,6 +414,15 @@ class ToolsTab(Vertical):
         border-bottom: solid $accent;
     }
 
+    ToolsTab #txt-tools-custom-dir {
+        width: 40;
+        margin-right: 1;
+    }
+
+    ToolsTab #tools-toolbar Button {
+        margin-right: 1;
+    }
+
     ToolsTab #tools-main {
         height: 1fr;
     }
