@@ -8,7 +8,7 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import Center, ScrollableContainer, Vertical
-from textual.widgets import Button, Label, RichLog, Static, TabbedContent
+from textual.widgets import Button, Label, RichLog, Rule, Static, TabbedContent
 
 if __package__:
     from ..version import COPYRIGHT
@@ -35,6 +35,24 @@ TAB_IDS = [
 ]
 
 DEFAULT_SCREENSHOT_DIR = Path(__file__).parents[1] / "doc" / "screenshots"
+
+_LICENSE_PATH = Path(__file__).parents[2] / "LICENSE"
+_OPENSOURCE_PATH = Path(__file__).parents[1] / "doc" / "opensource.md"
+
+# Rich-markup table of direct open-source dependencies.
+_OSS_TABLE = (
+    "  [bold cyan]Component[/bold cyan]"
+    "          [bold cyan]Version[/bold cyan]"
+    "    [bold cyan]License[/bold cyan]\n"
+    "  " + "─" * 54 + "\n"
+    "  Textual              ≥ 8.1      MIT\n"
+    "  pyOCD               ≥ 0.44     Apache 2.0\n"
+    "  pySerial            ≥ 3.5      BSD\n"
+    "  Pygments            ≥ 2.17     BSD 2-Clause\n"
+    "  xonsh               ≥ 0.18     BSD 2-Clause\n"
+    "  packaging           ≥ 22.0     Apache 2.0 / BSD 2-Clause\n"
+    "  PyYAML              ≥ 6.0      MIT\n"
+)
 
 
 async def capture_screenshots(
@@ -107,6 +125,15 @@ class AboutTab(Vertical):
         text-align: center;
         padding: 0 2;
     }
+    AboutTab #about-oss {
+        height: auto;
+        align: center middle;
+        padding: 0 4 1 4;
+    }
+    AboutTab #about-oss Static {
+        text-align: left;
+        width: auto;
+    }
     AboutTab #self-test-log {
         height: 1fr;
         border-top: solid $accent;
@@ -130,7 +157,13 @@ class AboutTab(Vertical):
             with Center(id="about-buttons"):
                 yield Button("Capture Screenshots", id="btn-capture-screenshots", variant="primary")
                 yield Button("Self Test", id="btn-self-test", variant="default")
+                yield Button("View License", id="btn-license", variant="default")
+                yield Button("Open Source", id="btn-opensource", variant="default")
             yield Label("", id="about-status")
+        with Center(id="about-oss"):
+            yield Rule()
+            yield Static("[bold]Open-source components[/bold]\n")
+            yield Static(_OSS_TABLE)
         yield RichLog(id="self-test-log", highlight=False, markup=True)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -138,6 +171,25 @@ class AboutTab(Vertical):
             await self._run_capture()
         elif event.button.id == "btn-self-test":
             await self._run_self_test()
+        elif event.button.id == "btn-license":
+            self._open_license()
+        elif event.button.id == "btn-opensource":
+            self._open_file_in_files(_OPENSOURCE_PATH)
+
+    def _open_license(self) -> None:
+        self._open_file_in_files(_LICENSE_PATH)
+
+    def _open_file_in_files(self, path: Path) -> None:
+        if not path.is_file():
+            self.notify(f"File not found: {path.name}", severity="warning")
+            return
+        if __package__:
+            from ..tabs.files import FilesTab
+        else:
+            from tabs.files import FilesTab
+        from textual.widgets import TabbedContent
+        self.app.query_one(TabbedContent).active = "files"
+        self.app.query_one(FilesTab).open_file(path)
 
     async def _run_capture(self) -> None:
         button = self.query_one("#btn-capture-screenshots", Button)
