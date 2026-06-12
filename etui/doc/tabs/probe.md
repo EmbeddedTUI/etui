@@ -32,6 +32,7 @@ targets can be entered under **Settings -> Probe / Debugger** using an ID from
 - [ST-LINK](../probes/stlink.md)
 - [Generic CMSIS-DAP](../probes/cmsis-dap.md)
 - [NXP LPC-LINK2](../probes/lpc-link2.md)
+- [Raspberry Pi Debug Probe](../probes/raspberry-pi-debug.md)
 
 ## Usage
 
@@ -45,6 +46,8 @@ targets can be entered under **Settings -> Probe / Debugger** using an ID from
 
 - pyocd cannot enumerate TI XDS110 probes in native firmware mode; etui detects them by USB VID:PID and switches to OpenOCD automatically.
 - LPC-LINK2 CMSIS-DAP probes with USB ID `1fc9:0090` are detected through
+  pyOCD or the known-device USB fallback.
+- Raspberry Pi Debug Probes with USB ID `2e8a:000c` are detected through
   pyOCD or the known-device USB fallback.
 - Settings (backend, target, ports, speed) persist across sessions via **Settings → Probe / Debugger**.
 - Click **Stop** to terminate the GDB server and release the probe.
