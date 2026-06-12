@@ -12,7 +12,8 @@ dependencies = [
     "textual>=8.1.1",
     "pyocd>=0.44.1",
     "pyserial>=3.5",
-    "pygments>=2.17.0"
+    "pygments>=2.17.0",
+    "xonsh>=0.18.3"
 ]
 
 [project.scripts]

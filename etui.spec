@@ -20,6 +20,7 @@ hiddenimports = []
 hiddenimports += collect_submodules('textual')
 hiddenimports += collect_submodules('pygments')
 hiddenimports += collect_submodules('usb')
+hiddenimports += collect_submodules('xonsh')
 hiddenimports += [
     'usb.core',
     'usb.backend.libusb1',
