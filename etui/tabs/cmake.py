@@ -2,6 +2,7 @@
 # Copyright (c) 2026 32bitmico LLC
 
 import os
+import shutil
 import signal
 import json
 import asyncio
@@ -67,6 +68,8 @@ class CMakeTab(Vertical):
         super().__init__()
         self.repo_path: Path | None = None
         self.build_path: Path | None = None
+        self._configured_build_path: Path | None = None
+        self._configured_build_type: str | None = None
         self.selected_build_type: str = "Debug"
         self.selected_target: str = "all"
         self.is_multi_config: bool = False
@@ -115,11 +118,8 @@ class CMakeTab(Vertical):
         build_input = self.query_one("#txt-cmake-build", Input)
         log = self.query_one(RichLog)
         
-        # Check CMake executable presence on PATH
-        cmake_exists = any(
-            os.access(os.path.join(path, "cmake"), os.X_OK)
-            for path in os.environ.get("PATH", "").split(os.pathsep)
-        )
+        # Check CMake executable presence on PATH using shutil.which
+        cmake_exists = shutil.which("cmake") is not None
         if not cmake_exists:
             log.clear()
             log.write("[red]Error: 'cmake' executable not found on system PATH.[/red]")
@@ -173,10 +173,18 @@ class CMakeTab(Vertical):
             query_data = {"requests": [{"kind": "codemodel", "version": 2}]}
             query_file.write_text(json.dumps(query_data))
             
-            # Run light configuration to generate reply if fresh
+            # Check if configure is needed to prevent stale targets
             reply_dir = self.build_path / ".cmake" / "api" / "v1" / "reply"
-            if not reply_dir.is_dir():
-                log.write("[cyan]Generating CMake API Cache...[/cyan]")
+            index_files = list(reply_dir.glob("index-*.json"))
+            needs_configure = True
+            if index_files:
+                latest_index = max(index_files, key=os.path.getmtime)
+                cmakelists = self.repo_path / "CMakeLists.txt"
+                if cmakelists.is_file() and latest_index.stat().st_mtime >= cmakelists.stat().st_mtime:
+                    needs_configure = False
+
+            if needs_configure:
+                log.write("[cyan]Generating/Refreshing CMake API Cache...[/cyan]")
                 cmd = ["cmake", "-S", str(self.repo_path), "-B", str(self.build_path)]
                 if not self.is_multi_config:
                     cmd.append(f"-DCMAKE_BUILD_TYPE={self.selected_build_type}")
@@ -204,70 +212,85 @@ class CMakeTab(Vertical):
         for t_name, t_type in targets:
             table.add_row(t_name, t_type)
             self.known_targets.add(t_name)
+            
+        self._configured_build_path = self.build_path
+        self._configured_build_type = self.selected_build_type
 
     async def _parse_file_api_reply(self, reply_dir: Path) -> list[tuple[str, str]]:
         if not reply_dir.is_dir():
-            return []
+            raise FileNotFoundError(f"Reply directory '{reply_dir}' does not exist.")
 
         # Parse index-*.json file to identify correct codemodel-v2 file
         index_files = list(reply_dir.glob("index-*.json"))
         if not index_files:
-            return []
+            raise FileNotFoundError("CMake File API index file not found. Project must be configured first.")
         latest_index = max(index_files, key=os.path.getmtime)
         
-        try:
-            with open(latest_index, "r") as f:
+        with open(latest_index, "r") as f:
+            try:
                 index_data = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Malformed index JSON: {e}")
             
-            # Extract generator multi-config capability
-            cmake_info = index_data.get("cmake", {})
-            generator_info = cmake_info.get("generator", {})
-            self.is_multi_config = generator_info.get("multiConfig", False)
+        # Extract generator multi-config capability
+        cmake_info = index_data.get("cmake", {})
+        generator_info = cmake_info.get("generator", {})
+        self.is_multi_config = generator_info.get("multiConfig", False)
 
-            # Find reply for codemodel kind
-            reply_file_name = None
-            replies = index_data.get("reply", {})
-            client_replies = replies.get("client-etui", {}).get("query.json", {}).get("responses", [])
-            for resp in client_replies:
-                if resp.get("kind") == "codemodel":
-                    reply_file_name = resp.get("jsonFile")
+        # Find reply for codemodel kind
+        reply_file_name = None
+        replies = index_data.get("reply", {})
+        client_replies = replies.get("client-etui", {}).get("query.json", {}).get("responses", [])
+        for resp in client_replies:
+            if resp.get("kind") == "codemodel":
+                reply_file_name = resp.get("jsonFile")
+        
+        if not reply_file_name:
+            raise ValueError("CMake File API replies do not contain codemodel metadata. Make sure query was written and configure completed.")
             
-            if not reply_file_name:
-                return []
-                
-            codemodel_path = reply_dir / reply_file_name
-            with open(codemodel_path, "r") as f:
+        codemodel_path = reply_dir / reply_file_name
+        if not codemodel_path.is_file():
+            raise FileNotFoundError(f"Codemodel reply file '{reply_file_name}' not found.")
+
+        with open(codemodel_path, "r") as f:
+            try:
                 codemodel_data = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Malformed codemodel JSON: {e}")
             
-            targets = []
-            configurations = codemodel_data.get("configurations", [])
+        targets = []
+        configurations = codemodel_data.get("configurations", [])
+        if not configurations:
+            raise ValueError("CMake codemodel response contains no configurations.")
             
-            # Select appropriate configuration list for multi-config vs single-config
-            active_config = configurations[0]
-            if self.is_multi_config:
-                for cfg in configurations:
-                    if cfg.get("name") == self.selected_build_type:
-                        active_config = cfg
-                        break
+        # Select appropriate configuration list for multi-config vs single-config
+        active_config = configurations[0]
+        if self.is_multi_config:
+            found = False
+            for cfg in configurations:
+                if cfg.get("name") == self.selected_build_type:
+                    active_config = cfg
+                    found = True
+                    break
+            if not found:
+                raise ValueError(f"Configuration '{self.selected_build_type}' not found in codemodel. Available: {', '.join(c.get('name', '') for c in configurations)}")
 
-            for target_ref in active_config.get("targets", []):
-                t_name = target_ref.get("name")
-                target_json_name = target_ref.get("jsonFile")
-                t_type = "Target"
-                
-                # Read detailed target JSON file to extract type
-                if target_json_name:
-                    try:
-                        with open(reply_dir / target_json_name, "r") as tf:
-                            target_detail = json.load(tf)
-                            t_type = target_detail.get("type", "Target")
-                    except Exception:
-                        pass
-                
-                targets.append((t_name, t_type))
-            return targets
-        except Exception:
-            return []
+        for target_ref in active_config.get("targets", []):
+            t_name = target_ref.get("name")
+            target_json_name = target_ref.get("jsonFile")
+            t_type = "Target"
+            
+            # Read detailed target JSON file to extract type
+            if target_json_name:
+                try:
+                    with open(reply_dir / target_json_name, "r") as tf:
+                        target_detail = json.load(tf)
+                        t_type = target_detail.get("type", "Target")
+                except Exception:
+                    pass
+            
+            targets.append((t_name, t_type))
+        return targets
 
     async def _capture_command(
         self,
@@ -288,7 +311,7 @@ class CMakeTab(Vertical):
         stdout_chunks = []
         stderr_chunks = []
 
-        async def read_stream(stream, chunks, is_stdout: bool):
+        async def read_stream(stream, chunks):
             try:
                 while True:
                     line = await stream.readline()
@@ -296,7 +319,8 @@ class CMakeTab(Vertical):
                         break
                     decoded = line.decode(errors="replace")
                     chunks.append(decoded)
-                    if log_widget and is_stdout:
+                    # Stream both stdout and stderr outputs to the log in real-time
+                    if log_widget:
                         log_widget.write(escape(decoded.rstrip()))
             except asyncio.CancelledError:
                 pass
@@ -305,8 +329,8 @@ class CMakeTab(Vertical):
             # Read stdout and stderr concurrently with a timeout limit
             await asyncio.wait_for(
                 asyncio.gather(
-                    read_stream(process.stdout, stdout_chunks, True),
-                    read_stream(process.stderr, stderr_chunks, False)
+                    read_stream(process.stdout, stdout_chunks),
+                    read_stream(process.stderr, stderr_chunks)
                 ),
                 timeout=timeout
             )
@@ -407,15 +431,22 @@ class CMakeTab(Vertical):
             return
         self.selected_build_type = build_type
 
-        # 2. Validate and Constrain Build Path Containment
+        # 2. Validate and Constrain Build Path Containment (Strict sub-containment check)
         custom_build_dir = self.query_one("#txt-cmake-build", Input).value.strip() or "build"
         candidate_build_path = (self.repo_path / custom_build_dir).resolve()
-        if not candidate_build_path.is_relative_to(self.repo_path):
-            self.query_one(RichLog).write("[red]Error: Build directory must reside strictly inside the repository root.[/red]")
+        if not candidate_build_path.is_relative_to(self.repo_path) or candidate_build_path == self.repo_path:
+            self.query_one(RichLog).write("[red]Error: Build directory must reside strictly inside a subdirectory of the repository root.[/red]")
             return
+
+        # 3. Require Configure before operating on a changed directory or build type
+        if button_id in {"btn-cmake-build", "btn-cmake-clean"}:
+            if candidate_build_path != self._configured_build_path or build_type != self._configured_build_type:
+                self.query_one(RichLog).write("[red]Error: Build directory or type has changed. You must 'Configure' the project first.[/red]")
+                return
+
         self.build_path = candidate_build_path
 
-        # 3. Validate target name
+        # 4. Validate target name
         if self.selected_target.startswith("-"):
             self.query_one(RichLog).write("[red]Error: Invalid target name starting with '-'.[/red]")
             return
@@ -453,4 +484,4 @@ class CMakeTab(Vertical):
             return
         row_data = self.query_one(DataTable).get_row(event.row_key)
         self.selected_target = str(row_data[0])
-        self.query_one(RichLog).write(f"[cyan]Selected target: {self.selected_target}[/cyan]")
+        self.query_one(RichLog).write(f"[cyan]Selected target: {escape(self.selected_target)}[/cyan]")

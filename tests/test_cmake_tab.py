@@ -26,8 +26,8 @@ class CMakeTabUnitTests(unittest.IsolatedAsyncioTestCase):
         tab = CMakeTab()
         with tempfile.TemporaryDirectory() as tmpdir:
             reply_dir = Path(tmpdir)
-            targets = await tab._parse_file_api_reply(reply_dir)
-            self.assertEqual(len(targets), 0)
+            with self.assertRaises(FileNotFoundError):
+                await tab._parse_file_api_reply(reply_dir)
 
     async def test_parse_file_api_reply_single_config(self) -> None:
         tab = CMakeTab()
@@ -141,7 +141,47 @@ class CMakeTabUnitTests(unittest.IsolatedAsyncioTestCase):
             # Verify build path was not changed to the invalid one and build is not busy
             self.assertNotEqual(tab.build_path, Path("/workspace/escaped_build").resolve())
             log_content = "\n".join(line.text for line in tab.query_one(RichLog).lines)
-            self.assertIn("Error: Build directory must reside strictly inside the repository root", log_content)
+            self.assertIn("Error: Build directory must reside strictly inside a subdirectory of the repository root", log_content)
+
+    async def test_path_containment_rejects_root(self) -> None:
+        app = CMakeTestApp()
+        async with app.run_test() as pilot:
+            tab = app.query_one(CMakeTab)
+            tab.repo_path = Path("/workspace/myrepo")
+            tab.build_path = Path("/workspace/myrepo/build")
+            tab.known_targets = {"all"}
+            tab.busy = False
+            
+            # Attempt to use repository root itself as build directory
+            tab.query_one("#txt-cmake-build", Input).value = "."
+            tab.query_one("#txt-cmake-type", Input).value = "Debug"
+            
+            tab._set_controls_enabled(True)
+            await pilot.click("#btn-cmake-build")
+            
+            log_content = "\n".join(line.text for line in tab.query_one(RichLog).lines)
+            self.assertIn("Error: Build directory must reside strictly inside a subdirectory of the repository root", log_content)
+
+    async def test_build_requires_configure(self) -> None:
+        app = CMakeTestApp()
+        async with app.run_test() as pilot:
+            tab = app.query_one(CMakeTab)
+            tab.repo_path = Path("/workspace/myrepo")
+            tab.build_path = Path("/workspace/myrepo/build")
+            tab._configured_build_path = Path("/workspace/myrepo/build")
+            tab._configured_build_type = "Debug"
+            tab.known_targets = {"all"}
+            tab.busy = False
+            
+            # Change build directory without configuring
+            tab.query_one("#txt-cmake-build", Input).value = "build_new"
+            tab.query_one("#txt-cmake-type", Input).value = "Debug"
+            
+            tab._set_controls_enabled(True)
+            await pilot.click("#btn-cmake-build")
+            
+            log_content = "\n".join(line.text for line in tab.query_one(RichLog).lines)
+            self.assertIn("Error: Build directory or type has changed. You must 'Configure' the project first", log_content)
 
 if __name__ == "__main__":
     unittest.main()
