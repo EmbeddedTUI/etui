@@ -589,6 +589,30 @@ class ProbeTab(Horizontal):
         log.write(f"[green]{self._backend} stopped[/green]")
         self._proc = None
 
+    async def restart_for_lldb(self) -> None:
+        """Restart the gdb server after its LLDB client aborted."""
+        log = self.query_one(ProbeLog)
+        process = self._proc
+        if process is not None and process.returncode is None:
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+            except TimeoutError:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+
+        self._proc = None
+        self._lldb_opened = False
+        log.write("[yellow]restarting probe gdb server after LLDB abort[/yellow]")
+        await asyncio.sleep(0.25)
+        await self.start()
+
     @staticmethod
     def _kill_stale_procs(own_pid: int | None) -> list[int]:
         """ Terminate stray openocd/pyocd processes, skipping our own. """
@@ -723,10 +747,11 @@ class ProbeTab(Horizontal):
 
     async def _read_output(self) -> None:
         log = self.query_one(ProbeLog)
-        assert self._proc is not None and self._proc.stdout is not None
+        process = self._proc
+        assert process is not None and process.stdout is not None
         self._pyocd_failed = False
         while True:
-            line = await self._proc.stdout.readline()
+            line = await process.stdout.readline()
             if not line:
                 break
             text = line.decode(errors="replace").rstrip()
@@ -775,6 +800,9 @@ class ProbeTab(Horizontal):
                                 "switch Backend to 'stlink' and press Start[/yellow]"
                             )
                         break
+        await process.wait()
+        if self._proc is process:
+            self._proc = None
         # Process exited — offer stlink fallback if pyocd failed.
         if self._pyocd_failed:
             log.write(

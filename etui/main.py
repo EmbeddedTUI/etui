@@ -18,7 +18,7 @@ if __package__:
     from .tabs.console import ConsoleTab
     from .tabs.files import FilesTab
     from .tabs.probe import ProbeTab, LldbStart
-    from .tabs.lldb import LldbTab
+    from .tabs.lldb import LldbTab, ProbeRestartRequested
     from .tabs.theme import ThemeTab, ThemeChanged
     from .tabs.serial import SerialTab
     from .tabs.venv import VenvTab
@@ -34,7 +34,7 @@ else:
     from tabs.console import ConsoleTab
     from tabs.files import FilesTab
     from tabs.probe import ProbeTab, LldbStart
-    from tabs.lldb import LldbTab
+    from tabs.lldb import LldbTab, ProbeRestartRequested
     from tabs.theme import ThemeTab, ThemeChanged
     from tabs.serial import SerialTab
     from tabs.venv import VenvTab
@@ -257,6 +257,11 @@ class EtuiApp(App):
         lldb = self.query_one(LldbTab)
         await lldb.connect(message.port, message.arch)
         self.query_one(TabbedContent).active = "lldb"
+
+    async def on_probe_restart_requested(
+        self, message: ProbeRestartRequested
+    ) -> None:
+        await self.query_one(ProbeTab).restart_for_lldb()
 
     def on_open_doc_file(self, message: OpenDocFile) -> None:
         self.query_one(TabbedContent).active = "files"

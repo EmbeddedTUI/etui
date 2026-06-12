@@ -109,6 +109,7 @@ THEMES = {
 }
 DEFAULT_THEME = "vibrant"
 MEMORY_MAP_ASSERTION = 'GetMemoryRegionInfo() succeeded, then failed'
+CONNECT_FAILURE = "error: Failed to connect port"
 
 # Debug control buttons shown at the bottom of the dashboard panel.
 # (label, button id, lldb command). Frame nav refreshes the dashboard
@@ -172,6 +173,10 @@ class SectionToggle(Message):
         super().__init__()
         self.name = name
         self.collapsed = collapsed
+
+
+class ProbeRestartRequested(Message):
+    """Request a fresh gdb-server process after LLDB aborts."""
 
 
 class DashboardSection(Vertical):
@@ -317,6 +322,9 @@ class LldbTab(Vertical):
         self._memory_map_assertion = False
         self._suppress_crash_trace = False
         self._recovery_attempted = False
+        self._remote_memory_safe_mode = False
+        self._connect_event: asyncio.Event | None = None
+        self._connect_succeeded = False
 
     def compose(self) -> ComposeResult:
         if __package__:
@@ -500,7 +508,7 @@ class LldbTab(Vertical):
             return f"settings set target.default-arch {self._arch}"
         return None
 
-    async def start(self) -> None:
+    async def start(self) -> bool:
         log = self.query_one(LldbLog)
         self._memory_map_assertion = False
         self._suppress_crash_trace = False
@@ -516,7 +524,7 @@ class LldbTab(Vertical):
 
         if shutil.which(lldb_path) is None:
             log.write(f"[red]{lldb_path} not found on PATH[/red]")
-            return
+            return False
         self._proc = await asyncio.create_subprocess_exec(
             lldb_path, "--no-use-colors",
             stdin=asyncio.subprocess.PIPE,
@@ -536,11 +544,43 @@ class LldbTab(Vertical):
                 "disassembly boundaries are unavailable[/yellow]"
             )
         # Connect to the OpenOCD gdb server.
-        await self.send_command(f"gdb-remote localhost:{self._port}")
+        if not await self._connect_remote():
+            await self._discard_process(self._proc)
+            return False
         # Install a stop-hook that redraws the dashboard on every stop, then
         # draw it once for the initial (post-connect) halted state.
         await self._install_stop_hook()
         await self.refresh_dashboard()
+        return True
+
+    async def _connect_remote(self, timeout: float = 5.0) -> bool:
+        self._connect_event = asyncio.Event()
+        self._connect_succeeded = False
+        await self.send_command(f"gdb-remote localhost:{self._port}")
+        try:
+            await asyncio.wait_for(self._connect_event.wait(), timeout=timeout)
+        except TimeoutError:
+            self.query_one(LldbLog).write(
+                "[red]timed out waiting for the gdb server connection[/red]"
+            )
+            return False
+        finally:
+            self._connect_event = None
+        return self._connect_succeeded
+
+    async def _discard_process(
+        self, process: asyncio.subprocess.Process | None
+    ) -> None:
+        if process is None:
+            return
+        if self._proc is process:
+            self._proc = None
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                return
+            await process.wait()
 
     def _dash_commands(self) -> list[str]:
         """ Build the marker-wrapped command list for the current layout. """
@@ -548,7 +588,12 @@ class LldbTab(Vertical):
         for name in self._layout:
             title, section_cmds = SECTIONS[name]
             cmds.append(f"script print('{SECTION}{title}')")
-            cmds.extend(section_cmds)
+            if self._remote_memory_safe_mode and name in {"assembly", "stack"}:
+                cmds.append(
+                    "script print('remote memory view disabled after LLDB crash')"
+                )
+            else:
+                cmds.extend(section_cmds)
         cmds.append(f"script print('{DASH_END}')")
         return cmds
 
@@ -605,30 +650,26 @@ class LldbTab(Vertical):
             self._handle_exit(proc.returncode)
             if self._memory_map_assertion and not self._recovery_attempted:
                 self._recovery_attempted = True
-                self.run_worker(
-                    self._recover_from_memory_map_assertion(proc),
-                    name="lldb-memory-map-recovery",
-                    exit_on_error=False,
-                )
+                self._request_probe_restart(proc)
 
-    async def _recover_from_memory_map_assertion(
+    def _request_probe_restart(
         self, failed_process: asyncio.subprocess.Process
     ) -> None:
         if self._port is None or self._proc is not failed_process:
             return
-        await asyncio.sleep(0.2)
         self._stop_hook_id = None
+        self._proc = None
         self.query_one(LldbLog).write(
-            "[yellow]restarting LLDB with safe raw code-memory display[/yellow]"
+            "[yellow]restarting the probe server before reconnecting LLDB[/yellow]"
         )
-        await self.start()
+        self.post_message(ProbeRestartRequested())
 
     def _handle_exit(self, code: int | None) -> None:
         log = self.query_one(LldbLog)
         if self._memory_map_assertion:
             log.write(
                 "[bold red]LLDB aborted while querying remote memory regions.[/bold red] "
-                "The unsafe live disassembly command has been disabled."
+                "Memory-backed dashboard views have been disabled."
             )
             return
         if code is not None and code < 0:
@@ -645,16 +686,34 @@ class LldbTab(Vertical):
 
     def _route(self, text: str) -> None:
         """ Send dashboard-marked output to the dashboard, rest to console. """
+        if text.startswith("Process ") and "stopped" in text:
+            if self._connect_event is not None:
+                self._connect_succeeded = True
+                self._connect_event.set()
+        elif CONNECT_FAILURE in text:
+            if self._connect_event is not None:
+                self._connect_succeeded = False
+                self._connect_event.set()
         if MEMORY_MAP_ASSERTION in text:
             self._memory_map_assertion = True
             self._suppress_crash_trace = True
+            self._remote_memory_safe_mode = True
             self._in_dash = False
             self._dash_buf = []
             self._last_data["assembly"] = [
-                "LLDB aborted while disassembling remote memory.",
-                "Restarting with a raw Thumb halfword view.",
+                "LLDB aborted while reading remote memory.",
+                "Restarting with memory-backed views disabled.",
+            ]
+            self._last_data["stack"] = [
+                "remote memory view disabled after LLDB crash"
             ]
             self._apply_data()
+            process = self._proc
+            if process is not None and process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
             return
         if self._suppress_crash_trace:
             return
