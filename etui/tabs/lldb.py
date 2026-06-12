@@ -28,7 +28,13 @@ SECTION = "### "
 # name -> (title, [lldb commands]).
 SECTIONS = {
     "registers": ("Registers", ["register read"]),
-    "assembly": ("Assembly", ["disassemble --pc --count 8"]),
+    # LLDB 20 can abort in IRMemoryMap::FindSpace when `disassemble --pc`
+    # queries inconsistent memory-region data from embedded gdb-remotes.
+    # Reading bounded Thumb halfwords avoids that host-process crash.
+    "assembly": (
+        "Code Memory",
+        ["memory read --size 2 --format x --count 8 $pc"],
+    ),
     "stack": ("Stack", ["memory read --size 4 --format x --count 16 $sp"]),
     "backtrace": ("Backtrace", ["thread backtrace"]),
     "source": ("Source", ["source list --count 10"]),
@@ -102,6 +108,7 @@ THEMES = {
     },
 }
 DEFAULT_THEME = "vibrant"
+MEMORY_MAP_ASSERTION = 'GetMemoryRegionInfo() succeeded, then failed'
 
 # Debug control buttons shown at the bottom of the dashboard panel.
 # (label, button id, lldb command). Frame nav refreshes the dashboard
@@ -307,6 +314,9 @@ class LldbTab(Vertical):
                 self._executable = Path(executable).expanduser().resolve()
         self._theme = THEMES[self._theme_name]
         self._stop_hook_id: int | None = None
+        self._memory_map_assertion = False
+        self._suppress_crash_trace = False
+        self._recovery_attempted = False
 
     def compose(self) -> ComposeResult:
         if __package__:
@@ -350,6 +360,7 @@ class LldbTab(Vertical):
         self._port = port
         self._arch = arch
         self._stop_hook_id = None
+        self._recovery_attempted = False
         await self.start()
 
     async def restart(self) -> None:
@@ -358,6 +369,7 @@ class LldbTab(Vertical):
             log.write("[yellow]no previous connection to restart[/yellow]")
             return
         log.write("[cyan]restarting lldb...[/cyan]")
+        self._recovery_attempted = False
         await self.connect(self._port, self._arch)
 
     async def set_theme(self, name: str) -> None:
@@ -490,6 +502,8 @@ class LldbTab(Vertical):
 
     async def start(self) -> None:
         log = self.query_one(LldbLog)
+        self._memory_map_assertion = False
+        self._suppress_crash_trace = False
         
         lldb_path = "lldb"
         if hasattr(self.app, "tool_registry"):
@@ -585,10 +599,38 @@ class LldbTab(Vertical):
         await proc.wait()
         # Ignore if a newer session already replaced this process.
         if proc is self._proc:
+            if self._in_dash:
+                self._in_dash = False
+                self._dash_buf = []
             self._handle_exit(proc.returncode)
+            if self._memory_map_assertion and not self._recovery_attempted:
+                self._recovery_attempted = True
+                self.run_worker(
+                    self._recover_from_memory_map_assertion(proc),
+                    name="lldb-memory-map-recovery",
+                    exit_on_error=False,
+                )
+
+    async def _recover_from_memory_map_assertion(
+        self, failed_process: asyncio.subprocess.Process
+    ) -> None:
+        if self._port is None or self._proc is not failed_process:
+            return
+        await asyncio.sleep(0.2)
+        self._stop_hook_id = None
+        self.query_one(LldbLog).write(
+            "[yellow]restarting LLDB with safe raw code-memory display[/yellow]"
+        )
+        await self.start()
 
     def _handle_exit(self, code: int | None) -> None:
         log = self.query_one(LldbLog)
+        if self._memory_map_assertion:
+            log.write(
+                "[bold red]LLDB aborted while querying remote memory regions.[/bold red] "
+                "The unsafe live disassembly command has been disabled."
+            )
+            return
         if code is not None and code < 0:
             log.write(
                 f"[bold red]lldb crashed (signal {-code}).[/bold red] "
@@ -603,6 +645,19 @@ class LldbTab(Vertical):
 
     def _route(self, text: str) -> None:
         """ Send dashboard-marked output to the dashboard, rest to console. """
+        if MEMORY_MAP_ASSERTION in text:
+            self._memory_map_assertion = True
+            self._suppress_crash_trace = True
+            self._in_dash = False
+            self._dash_buf = []
+            self._last_data["assembly"] = [
+                "LLDB aborted while disassembling remote memory.",
+                "Restarting with a raw Thumb halfword view.",
+            ]
+            self._apply_data()
+            return
+        if self._suppress_crash_trace:
+            return
         # lldb echoes "(lldb) <cmd>" for each piped command (the prompt is
         # printed even without a tty); drop those so neither panel is noisy.
         if text.startswith("(lldb) "):
@@ -718,7 +773,7 @@ class LldbTab(Vertical):
                 text.append(line + "\n", style=dim)
                 continue
             pre, addr, colon, rest = m.groups()
-            if current:
+            if current or not text:
                 text.append(pre + addr + colon + rest + "\n", style=cur_s)
             else:
                 text.append(pre)
