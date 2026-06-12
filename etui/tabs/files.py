@@ -4,10 +4,11 @@
 import os
 import datetime
 import mimetypes
+from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical, ScrollableContainer
-from textual.widgets import DirectoryTree, Button
+from textual.widgets import DirectoryTree, Button, Input, Label
 from textual.widgets import Static
 from rich.syntax import Syntax
 
@@ -23,10 +24,31 @@ class FileViewer(Vertical):
         with ScrollableContainer():
             yield Static(id="file-display", expand=True)
 
-class FilesTab(Horizontal):
+class FilesTab(Vertical):
     """ Files tab"""
 
     DEFAULT_CSS = """
+    FilesTab #files-workspace-bar {
+        height: 3;
+        align: left middle;
+        padding: 0 1;
+        background: $surface;
+        border-bottom: solid $accent;
+    }
+    FilesTab #files-workspace-bar Label {
+        margin-top: 1;
+        margin-right: 1;
+    }
+    FilesTab #files-workspace-bar Input {
+        width: 60;
+    }
+    FilesTab #files-workspace-bar Button {
+        margin-left: 1;
+        min-width: 12;
+    }
+    FilesTab #files-body {
+        height: 1fr;
+    }
     FilesTab LeftWidget {
         width: 30%;
         border-right: solid $accent;
@@ -55,8 +77,18 @@ class FilesTab(Horizontal):
         self.view_mode = "content"
 
     def compose(self) -> ComposeResult:
-        yield LeftWidget()
-        yield FileViewer()
+        with Horizontal(id="files-workspace-bar"):
+            yield Label("Workspace Root:")
+            yield Input(placeholder="Path to workspace root...", id="txt-workspace-root")
+            yield Button("Set Root", id="btn-set-workspace-root")
+        with Horizontal(id="files-body"):
+            yield LeftWidget()
+            yield FileViewer()
+
+    def on_mount(self) -> None:
+        if hasattr(self.app, "workspace_root") and self.app.workspace_root:
+            self.query_one("LeftWidget").path = Path(self.app.workspace_root)
+            self.query_one("#txt-workspace-root", Input).value = self.app.workspace_root
 
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         """Called when the user selects a file in the directory tree."""
@@ -64,13 +96,34 @@ class FilesTab(Horizontal):
         self.current_path = event.path
         self.render_file()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-content":
             self.view_mode = "content"
             self.render_file()
         elif event.button.id == "btn-details":
             self.view_mode = "details"
             self.render_file()
+        elif event.button.id == "btn-set-workspace-root":
+            await self._action_set_workspace_root()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "txt-workspace-root":
+            await self._action_set_workspace_root()
+
+    async def _action_set_workspace_root(self) -> None:
+        path_input = self.query_one("#txt-workspace-root", Input)
+        path_str = path_input.value.strip()
+        if not path_str:
+            return
+        
+        path = Path(path_str).expanduser().resolve()
+        if not path.is_dir():
+            self.notify(f"Path '{path_str}' is not a valid directory.", severity="error")
+            return
+        
+        if hasattr(self.app, "set_workspace_root"):
+            await self.app.set_workspace_root(str(path))
+            self.notify(f"Workspace root set to {path}")
 
     def render_file(self) -> None:
         if not self.current_path:

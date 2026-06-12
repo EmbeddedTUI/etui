@@ -54,6 +54,7 @@ class EtuiApp(App):
             from tabs.tools import ToolRegistry
         self.tool_registry = ToolRegistry(self)
         self._last_active_tab = "files"
+        self.workspace_root = self.load_workspace_root()
 
 
     CSS = """
@@ -102,6 +103,82 @@ class EtuiApp(App):
             margin-left: 1;
         }
     """
+
+    def load_workspace_root(self) -> str | None:
+        import json
+        config_file = Path.home() / ".config" / "etui" / "workspace.json"
+        if config_file.is_file():
+            try:
+                data = json.loads(config_file.read_text())
+                return data.get("workspace_root")
+            except Exception:
+                pass
+        return None
+
+    def save_workspace_root(self, path: str) -> None:
+        config_dir = Path.home() / ".config" / "etui"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_file = config_dir / "workspace.json"
+        try:
+            config_file.write_text(json.dumps({"workspace_root": path}))
+        except Exception:
+            pass
+
+    async def set_workspace_root(self, path: str, update_files=True) -> None:
+        self.workspace_root = path
+        self.save_workspace_root(path)
+        
+        # 1. Update Files tab
+        if update_files:
+            try:
+                files_tab = self.query_one(FilesTab)
+                files_tab.query_one("LeftWidget").path = Path(path)
+                files_tab.query_one("#txt-workspace-root", Input).value = path
+            except Exception:
+                pass
+
+        # 2. Update Console tab (cwd)
+        try:
+            console_tab = self.query_one(ConsoleTab)
+            console_tab.cwd = Path(path)
+        except Exception:
+            pass
+
+        # 3. Update Venv tab
+        try:
+            venv_tab = self.query_one(VenvTab)
+            venv_tab.query_one("#venv-project-path", Input).value = path
+            if (Path(path) / "pyproject.toml").is_file():
+                self.run_worker(venv_tab._select_project())
+        except Exception:
+            pass
+
+        # 4. Update Git tab
+        try:
+            git_tab = self.query_one(GitTab)
+            if git_tab.repo_path is None or str(git_tab.repo_path) != str(Path(path).resolve()):
+                git_tab.query_one("#txt-repo-path", Input).value = path
+                git_tab.validate_and_load_repo(path)
+        except Exception:
+            pass
+
+        # 5. Update GitHub tab
+        try:
+            github_tab = self.query_one(GitHubTab)
+            self.run_worker(github_tab.change_repository(Path(path)))
+        except Exception:
+            pass
+
+        # 6. Update CMake tab
+        try:
+            cmake_tab = self.query_one(CMakeTab)
+            self.run_worker(cmake_tab.change_repository(Path(path)))
+        except Exception:
+            pass
+
+    async def on_mount(self) -> None:
+        if self.workspace_root:
+            await self.set_workspace_root(self.workspace_root, update_files=True)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -299,35 +376,7 @@ class EtuiApp(App):
             self.run_worker(console.run_command(message.command))
 
     async def on_repository_changed(self, message: RepositoryChanged) -> None:
-        # Update FilesTab path
-        try:
-            files_tab = self.query_one(FilesTab)
-            files_tab.query_one("LeftWidget").path = Path(message.path)
-        except Exception:
-            pass
-
-        # Update VenvTab path and select it if it has a pyproject.toml
-        try:
-            venv_tab = self.query_one(VenvTab)
-            venv_tab.query_one("#venv-project-path", Input).value = message.path
-            if (Path(message.path) / "pyproject.toml").is_file():
-                self.run_worker(venv_tab._select_project())
-        except Exception:
-            pass
-
-        # Update GitHubTab repo
-        try:
-            github_tab = self.query_one(GitHubTab)
-            self.run_worker(github_tab.change_repository(Path(message.path)))
-        except Exception:
-            pass
-
-        # Update CMakeTab repo
-        try:
-            cmake_tab = self.query_one(CMakeTab)
-            self.run_worker(cmake_tab.change_repository(Path(message.path)))
-        except Exception:
-            pass
+        await self.set_workspace_root(message.path, update_files=True)
 
     
 
