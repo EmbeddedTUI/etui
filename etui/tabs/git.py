@@ -1,24 +1,29 @@
 # Copyright (c) 2026 Pawel Wodnicki
 # Copyright (c) 2026 32bitmico LLC
 
+import asyncio
 import os
 import shlex
-import asyncio
+import signal
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
+
 from rich.text import Text
-from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.worker import Worker
-from textual.widgets import Label, Button, Input, Tree, RichLog
+from textual.worker import Worker, WorkerCancelled
+from textual.widgets import Button, Input, Label, RichLog, Tree
+
 
 class RepositoryChanged(Message):
     """Event posted when repository context changes."""
+
     def __init__(self, path: str) -> None:
         super().__init__()
         self.path = path
+
 
 @dataclass(frozen=True)
 class GitChange:
@@ -26,8 +31,11 @@ class GitChange:
     status: str
     staged: bool
 
+
 class GitTab(Vertical):
     """Repository Git dashboard tab."""
+
+    DIFF_LIMIT = 100 * 1024
 
     DEFAULT_CSS = """
     GitTab {
@@ -84,185 +92,357 @@ class GitTab(Vertical):
     def __init__(self) -> None:
         super().__init__()
         self.repo_path: Path | None = None
-        self.busy: bool = False
+        self.busy = False
         self._active_subprocess: asyncio.subprocess.Process | None = None
-        self._mutation_worker: Worker[None] | None = None
+        self._operation_worker: Worker[None] | None = None
         self._selected_change: GitChange | None = None
+        self._cancel_requested = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="git-repo-select"):
             yield Label("Git Repository: ")
-            yield Input(placeholder="Path to directory containing .git", id="txt-repo-path")
+            yield Input(
+                placeholder="Path to directory containing .git",
+                id="txt-repo-path",
+            )
             yield Button("Open", id="btn-open-repo")
 
         with Horizontal(id="git-info-bar"):
-            yield Label("Select an external git repository to begin.", id="lbl-git-info")
+            yield Label(
+                "Select an external git repository to begin.",
+                id="lbl-git-info",
+            )
 
         with Horizontal(id="git-main-split"):
-            # Left side: Staged and unstaged tree
             yield Tree("Changes", id="git-changes-tree")
-            
-            # Right side: Diff viewer and commit buttons
             with Vertical(id="git-view-panel"):
-                yield RichLog(id="git-diff-viewer", highlight=True, markup=True)
+                yield RichLog(
+                    id="git-diff-viewer",
+                    highlight=False,
+                    markup=False,
+                )
                 with Vertical(id="git-action-bar"):
                     with Horizontal():
-                        yield Button("Stage All", id="btn-git-add-all", disabled=True)
-                        yield Button("Stage Selected", id="btn-git-toggle-stage", disabled=True)
+                        yield Button(
+                            "Stage All",
+                            id="btn-git-add-all",
+                            disabled=True,
+                        )
+                        yield Button(
+                            "Stage Selected",
+                            id="btn-git-toggle-stage",
+                            disabled=True,
+                        )
                         yield Button("Pull", id="btn-git-pull", disabled=True)
                         yield Button("Push", id="btn-git-push", disabled=True)
-                        yield Button("Cancel", id="btn-git-cancel", variant="warning", disabled=True)
+                        yield Button(
+                            "Cancel",
+                            id="btn-git-cancel",
+                            variant="warning",
+                            disabled=True,
+                        )
                     with Horizontal():
-                        yield Input(placeholder="Commit message...", id="txt-commit-msg", disabled=True)
-                        yield Button("Commit", id="btn-git-commit", variant="primary", disabled=True)
+                        yield Input(
+                            placeholder="Commit message...",
+                            id="txt-commit-msg",
+                            disabled=True,
+                        )
+                        yield Button(
+                            "Commit",
+                            id="btn-git-commit",
+                            variant="primary",
+                            disabled=True,
+                        )
 
     def on_mount(self) -> None:
         self._rebuild_tree([], [])
+        self._set_controls_enabled(False)
 
     async def on_unmount(self) -> None:
         await self.cancel_active_operation()
 
     async def deactivate_tab(self) -> None:
-        """Invoked when switching away from this tab."""
         await self.cancel_active_operation()
 
+    def validate_and_load_repo(self, path: str) -> Worker[None] | None:
+        return self._start_operation(
+            self._validate_and_load_repo(path),
+            "git-validate-repository",
+        )
+
+    def load_repo_status(self) -> Worker[None] | None:
+        return self._start_operation(
+            self._load_repo_status(),
+            "git-load-status",
+        )
+
+    def show_file_diff(
+        self,
+        path: str,
+        is_staged: bool,
+    ) -> Worker[None] | None:
+        return self._start_operation(
+            self._show_file_diff(path, is_staged),
+            "git-show-diff",
+        )
+
+    def toggle_stage_file(
+        self,
+        path: str,
+        is_staged: bool,
+    ) -> Worker[None] | None:
+        return self._start_operation(
+            self._toggle_stage_file(path, is_staged),
+            "git-toggle-stage",
+        )
+
+    def run_git_command(self, args: list[str]) -> Worker[None] | None:
+        return self._start_operation(
+            self._run_git_command(args),
+            "git-mutation",
+        )
+
+    def _start_operation(
+        self,
+        operation: Awaitable[None],
+        name: str,
+    ) -> Worker[None] | None:
+        if self.busy:
+            if asyncio.iscoroutine(operation):
+                operation.close()
+            return None
+
+        self.busy = True
+        self._cancel_requested = False
+        self._set_controls_enabled(False)
+        worker = self.run_worker(
+            self._run_operation(operation),
+            name=name,
+            group="git-ops",
+            exclusive=False,
+            exit_on_error=False,
+        )
+        self._operation_worker = worker
+        return worker
+
+    async def _run_operation(self, operation: Awaitable[None]) -> None:
+        try:
+            await operation
+        except asyncio.CancelledError:
+            self._write_log("Git operation cancelled.", style="yellow")
+            raise
+        except (OSError, UnicodeError, ValueError) as error:
+            self._write_log(f"Git operation failed: {error}", style="red")
+        finally:
+            self._active_subprocess = None
+            self._operation_worker = None
+            self.busy = False
+            self._set_controls_enabled(self.repo_path is not None)
+
     async def cancel_active_operation(self) -> None:
-        process = self._active_subprocess
-        worker = self._mutation_worker
-
-        if process is not None and process.returncode is None:
-            try:
-                process.terminate()
-            except ProcessLookupError:
-                pass
-            try:
-                await asyncio.wait_for(process.wait(), timeout=3.0)
-            except asyncio.TimeoutError:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-                await process.wait()
-
+        self._cancel_requested = True
+        worker = self._operation_worker
         if worker is not None and not worker.is_finished:
             worker.cancel()
+        await self._terminate_active_subprocess()
+        if worker is not None:
+            try:
+                await worker.wait()
+            except WorkerCancelled:
+                pass
 
-    def set_controls_disabled(self, disabled: bool) -> None:
-        self.query_one("#btn-git-add-all", Button).disabled = disabled
-        self.query_one("#btn-git-toggle-stage", Button).disabled = (
-            disabled or self._selected_change is None
+    async def _terminate_active_subprocess(self) -> None:
+        process = self._active_subprocess
+        if process is None or process.returncode is not None:
+            return
+
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+        except ProcessLookupError:
+            return
+
+        try:
+            await asyncio.wait_for(process.wait(), timeout=3.0)
+        except TimeoutError:
+            try:
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
+            except ProcessLookupError:
+                return
+            await process.wait()
+
+    async def _capture_git(
+        self,
+        args: list[str],
+        *,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+        timeout: float = 15.0,
+        stdin: bytes | None = None,
+    ) -> tuple[int, bytes, bytes]:
+        process = await asyncio.create_subprocess_exec(
+            "git",
+            *args,
+            cwd=str(cwd or self.repo_path) if (cwd or self.repo_path) else None,
+            env=env,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=(os.name == "posix"),
         )
-        self.query_one("#btn-git-pull", Button).disabled = disabled
-        self.query_one("#btn-git-push", Button).disabled = disabled
-        self.query_one("#txt-commit-msg", Input).disabled = disabled
-        self.query_one("#btn-git-commit", Button).disabled = disabled
-        self.query_one("#btn-git-cancel", Button).disabled = not disabled
+        self._active_subprocess = process
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(stdin),
+                timeout=timeout,
+            )
+            return process.returncode or 0, stdout, stderr
+        except (TimeoutError, asyncio.CancelledError):
+            await self._terminate_active_subprocess()
+            raise
+        finally:
+            if self._active_subprocess is process:
+                self._active_subprocess = None
 
-    # 4.2 Repository Validation
-    @work(exclusive=True, group="git-queries")
-    async def validate_and_load_repo(self, path: str) -> None:
-        if self.busy:
-            return
+    async def _capture_git_limited(
+        self,
+        args: list[str],
+        *,
+        limit: int,
+        timeout: float = 15.0,
+    ) -> tuple[int, bytes, bytes, bool]:
+        process = await asyncio.create_subprocess_exec(
+            "git",
+            *args,
+            cwd=str(self.repo_path) if self.repo_path else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=(os.name == "posix"),
+        )
+        self._active_subprocess = process
+        assert process.stdout is not None
+        assert process.stderr is not None
 
-        self.busy = True
+        async def read_output() -> tuple[bytes, bytes, bool]:
+            chunks: list[bytes] = []
+            size = 0
+            stderr_task = asyncio.create_task(process.stderr.read())
+            truncated = False
+            try:
+                while chunk := await process.stdout.read(16 * 1024):
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if size > limit:
+                        truncated = True
+                        await self._terminate_active_subprocess()
+                        break
+                stderr = await stderr_task
+                if process.returncode is None:
+                    await process.wait()
+                return b"".join(chunks)[: limit + 1], stderr, truncated
+            finally:
+                if not stderr_task.done():
+                    stderr_task.cancel()
+
+        try:
+            stdout, stderr, truncated = await asyncio.wait_for(
+                read_output(),
+                timeout=timeout,
+            )
+            return process.returncode or 0, stdout, stderr, truncated
+        except (TimeoutError, asyncio.CancelledError):
+            await self._terminate_active_subprocess()
+            raise
+        finally:
+            if self._active_subprocess is process:
+                self._active_subprocess = None
+
+    async def _validate_and_load_repo(self, path: str) -> None:
         info_bar = self.query_one("#lbl-git-info", Label)
-        
-        try:
-            candidate = Path(path).expanduser().resolve()
-            if not candidate.is_dir():
-                info_bar.update("[red]Invalid path: directory does not exist[/red]")
-                self.repo_path = None
-                self.set_controls_disabled(True)
-                return
-
-            # Check inside work tree and resolve top-level root path
-            proc = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--show-toplevel",
-                cwd=str(candidate),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await proc.communicate()
-            
-            if proc.returncode != 0:
-                err_msg = stderr.decode().strip() or "Not a git repository."
-                info_bar.update(f"[red]Validation Failed: {err_msg}[/red]")
-                self.repo_path = None
-                self.set_controls_disabled(True)
-                return
-
-            self.repo_path = Path(stdout.decode().strip())
-            self.set_controls_disabled(False)
-            self.post_message(RepositoryChanged(str(self.repo_path)))
-            self.load_repo_status()
-        finally:
-            self.busy = False
-
-    # 4.3 Query Repo Status and Branch Info
-    @work(exclusive=True, group="git-queries")
-    async def load_repo_status(self) -> None:
-        if not self.repo_path or self.busy:
+        candidate = Path(path).expanduser().resolve()
+        if not candidate.is_dir():
+            self.repo_path = None
+            info_bar.update(Text("Invalid path: directory does not exist", style="red"))
             return
 
-        self.busy = True
-        try:
-            # 1. Get active branch name
-            branch_proc = await asyncio.create_subprocess_exec(
-                "git", "branch", "--show-current",
-                cwd=str(self.repo_path),
-                stdout=asyncio.subprocess.PIPE
-            )
-            branch_out, _ = await branch_proc.communicate()
-            branch = branch_out.decode().strip() or "DETACHED"
-
-            # 2. Get short commit hash
-            hash_proc = await asyncio.create_subprocess_exec(
-                "git", "rev-parse", "--short", "HEAD",
-                cwd=str(self.repo_path),
-                stdout=asyncio.subprocess.PIPE
-            )
-            hash_out, _ = await hash_proc.communicate()
-            commit_hash = hash_out.decode().strip() or "N/A"
-
-            # 3. Get status using porcelain v2 with NUL separator
-            status_proc = await asyncio.create_subprocess_exec(
-                "git", "status", "--porcelain=v2", "-z",
-                cwd=str(self.repo_path),
-                stdout=asyncio.subprocess.PIPE
-            )
-            status_out, _ = await status_proc.communicate()
-            
-            # Rebuild Staged & Unstaged lists using parsed entries
-            staged, unstaged = self._parse_porcelain_v2(status_out)
-
-            # Update Info Bar
-            info_bar = self.query_one("#lbl-git-info", Label)
+        returncode, stdout, stderr = await self._capture_git(
+            ["rev-parse", "--show-toplevel"],
+            cwd=candidate,
+        )
+        if returncode != 0:
+            self.repo_path = None
+            detail = stderr.decode(errors="replace").strip()
             info_bar.update(
-                f"Branch: [bold cyan]{branch}[/bold cyan]  |  "
-                f"Commit: [bold green]{commit_hash}[/bold green]  |  "
-                f"Changes: [bold yellow]{len(staged) + len(unstaged)}[/bold yellow]"
+                Text(f"Validation failed: {detail or 'Not a git repository.'}", style="red")
             )
+            return
 
-            # Rebuild Tree nodes
-            self._rebuild_tree(staged, unstaged)
-        finally:
-            self.busy = False
+        self.repo_path = Path(os.fsdecode(stdout).strip()).resolve()
+        self.post_message(RepositoryChanged(str(self.repo_path)))
+        await self._load_repo_status()
 
+    async def _load_repo_status(self) -> None:
+        if self.repo_path is None:
+            return
+
+        branch_code, branch_out, branch_error = await self._capture_git(
+            ["branch", "--show-current"]
+        )
+        if branch_code != 0:
+            raise OSError(branch_error.decode(errors="replace").strip())
+        branch = branch_out.decode(errors="replace").strip() or "DETACHED"
+
+        hash_code, hash_out, hash_error = await self._capture_git(
+            ["rev-parse", "--short", "HEAD"]
+        )
+        if hash_code == 0:
+            commit_hash = hash_out.decode(errors="replace").strip() or "N/A"
+        else:
+            commit_hash = "N/A"
+            if b"unknown revision" not in hash_error.lower():
+                self._write_log(
+                    hash_error.decode(errors="replace").strip(),
+                    style="yellow",
+                )
+
+        status_code, status_out, status_error = await self._capture_git(
+            ["status", "--porcelain=v2", "-z"]
+        )
+        if status_code != 0:
+            raise OSError(status_error.decode(errors="replace").strip())
+
+        staged, unstaged = self._parse_porcelain_v2(status_out)
+        self.query_one("#lbl-git-info", Label).update(
+            Text.assemble(
+                "Branch: ",
+                (branch, "bold cyan"),
+                "  |  Commit: ",
+                (commit_hash, "bold green"),
+                "  |  Changes: ",
+                (str(len(staged) + len(unstaged)), "bold yellow"),
+            )
+        )
+        self._rebuild_tree(staged, unstaged)
+
+    @staticmethod
     def _parse_porcelain_v2(
-        self, raw_status: bytes
+        raw_status: bytes,
     ) -> tuple[list[GitChange], list[GitChange]]:
-        """Parse NUL-separated porcelain v2 status entries."""
+        """Parse NUL-separated porcelain v2 records without altering paths."""
         staged: list[GitChange] = []
         unstaged: list[GitChange] = []
-        if not raw_status:
-            return staged, unstaged
-
         entries = raw_status.split(b"\x00")
-        i = 0
-        while i < len(entries):
-            entry = entries[i]
+        index = 0
+
+        while index < len(entries):
+            entry = entries[index]
             if not entry:
-                i += 1
+                index += 1
                 continue
 
             prefix = entry[:1]
@@ -273,10 +453,10 @@ class GitTab(Vertical):
                 xy, path_bytes = fields[1], fields[8]
             elif prefix == b"2":
                 fields = entry.split(b" ", 9)
-                if len(fields) != 10 or i + 1 >= len(entries):
+                if len(fields) != 10 or index + 1 >= len(entries):
                     raise ValueError("malformed porcelain v2 type-2 record")
                 xy, path_bytes = fields[1], fields[9]
-                i += 1  # Consume orig_path; retain it if rename UI needs it later.
+                index += 1
             elif prefix == b"u":
                 fields = entry.split(b" ", 10)
                 if len(fields) != 11:
@@ -286,23 +466,38 @@ class GitTab(Vertical):
                 fields = entry.split(b" ", 1)
                 if len(fields) != 2:
                     raise ValueError("malformed porcelain v2 untracked record")
-                unstaged.append(GitChange(os.fsdecode(fields[1]), "?", False))
-                i += 1
+                unstaged.append(
+                    GitChange(os.fsdecode(fields[1]), "?", False)
+                )
+                index += 1
+                continue
+            elif prefix in {b"!", b"#"}:
+                index += 1
                 continue
             else:
-                i += 1  # Ignore ignored-file and optional header records.
-                continue
+                raise ValueError(
+                    f"unsupported porcelain v2 record: {os.fsdecode(prefix)}"
+                )
 
+            if len(xy) != 2:
+                raise ValueError("malformed porcelain v2 XY status")
             path = os.fsdecode(path_bytes)
             if xy[0:1] != b".":
-                staged.append(GitChange(path, os.fsdecode(xy[0:1]), True))
+                staged.append(
+                    GitChange(path, os.fsdecode(xy[0:1]), True)
+                )
             if xy[1:2] != b".":
-                unstaged.append(GitChange(path, os.fsdecode(xy[1:2]), False))
-            i += 1
+                unstaged.append(
+                    GitChange(path, os.fsdecode(xy[1:2]), False)
+                )
+            index += 1
+
         return staged, unstaged
 
     def _rebuild_tree(
-        self, staged: list[GitChange], unstaged: list[GitChange]
+        self,
+        staged: list[GitChange],
+        unstaged: list[GitChange],
     ) -> None:
         tree = self.query_one("#git-changes-tree", Tree)
         tree.clear()
@@ -334,217 +529,160 @@ class GitTab(Vertical):
 
         self._selected_change = change
         toggle = self.query_one("#btn-git-toggle-stage", Button)
-        toggle.label = "Unstage Selected" if change.staged else "Stage Selected"
+        toggle.label = (
+            "Unstage Selected" if change.staged else "Stage Selected"
+        )
         toggle.disabled = self.busy
-        self.show_file_diff(change.path, change.staged)
+        if not self.busy:
+            self.show_file_diff(change.path, change.staged)
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         change = event.node.data
         if isinstance(change, GitChange) and not self.busy:
-            self._mutation_worker = self.toggle_stage_file(change.path, change.staged)
+            self.toggle_stage_file(change.path, change.staged)
 
-    # 4.4 Stage/Unstage Individual Node Action
-    @work(exclusive=True, group="git-mutations")
-    async def toggle_stage_file(self, path: str, is_staged: bool) -> None:
-        if not self.repo_path or self.busy:
+    async def _toggle_stage_file(self, path: str, is_staged: bool) -> None:
+        if self.repo_path is None:
             return
-        
-        self.busy = True
-        self.set_controls_disabled(True)
-        log = self.query_one("#git-diff-viewer", RichLog)
-        try:
-            if is_staged:
-                # Unstage file
-                args = ["restore", "--staged", "--", path]
-            else:
-                # Stage file
-                args = ["add", "--", path]
+        args = (
+            ["restore", "--staged", "--", path]
+            if is_staged
+            else ["add", "--", path]
+        )
+        returncode, _, stderr = await self._capture_git(args)
+        if returncode != 0:
+            raise OSError(stderr.decode(errors="replace").strip())
+        await self._load_repo_status()
 
-            self._active_subprocess = await asyncio.create_subprocess_exec(
-                "git", *args,
-                cwd=str(self.repo_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            _, stderr = await self._active_subprocess.communicate()
-            if self._active_subprocess.returncode != 0:
-                log.write(
-                    f"[red]Git operation failed: "
-                    f"{stderr.decode(errors='replace')}[/red]"
-                )
-        except asyncio.CancelledError:
-            log.write("[yellow]Git operation cancelled by user.[/yellow]")
-        finally:
-            self._active_subprocess = None
-            self.busy = False
-            self.set_controls_disabled(False)
-            self.load_repo_status()
-
-    # 4.5 Query File Diff (Staged vs Unstaged)
-    @work(exclusive=True, group="git-queries")
-    async def show_file_diff(self, path: str, is_staged: bool) -> None:
-        if not self.repo_path:
+    async def _show_file_diff(self, path: str, is_staged: bool) -> None:
+        if self.repo_path is None:
             return
-        
         log = self.query_one("#git-diff-viewer", RichLog)
         log.clear()
 
-        # Ask Git whether this exact staged/unstaged delta is binary. This also
-        # works for deleted files and staged blobs that differ from the worktree.
-        numstat_args = ["diff"]
+        base_args = ["diff"]
         if is_staged:
-            numstat_args.append("--cached")
-        numstat_args.extend(["--numstat", "--", path])
-        binary_proc = await asyncio.create_subprocess_exec(
-            "git", *numstat_args,
-            cwd=str(self.repo_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            base_args.append("--cached")
+
+        returncode, numstat, stderr = await self._capture_git(
+            [*base_args, "--numstat", "--", path]
         )
-        numstat, numstat_error = await binary_proc.communicate()
-        if binary_proc.returncode != 0:
-            log.write(
-                f"[red]Failed to inspect diff: "
-                f"{numstat_error.decode(errors='replace')}[/red]"
-            )
-            return
-        if numstat.startswith(b"-\t-\t"):
-            log.write("[yellow]Binary diff cannot be displayed inline.[/yellow]")
+        if returncode != 0:
+            raise OSError(stderr.decode(errors="replace").strip())
+        if any(line.startswith(b"-\t-\t") for line in numstat.splitlines()):
+            self._write_log("Binary diff cannot be displayed inline.", style="yellow")
             return
 
-        # Bound the diff output itself instead of checking the worktree file.
-        # This covers staged content, deletions, and small files with huge diffs.
-        args = ["diff"]
-        if is_staged:
-            args.append("--cached")
-        args.extend(["--color=never", "--", path])
-
-        proc = await asyncio.create_subprocess_exec(
-            "git", *args,
-            cwd=str(self.repo_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+        returncode, stdout, stderr, truncated = await self._capture_git_limited(
+            [*base_args, "--color=never", "--", path],
+            limit=self.DIFF_LIMIT,
+            timeout=15.0,
         )
-        assert proc.stdout is not None
-        stdout = await proc.stdout.read(100 * 1024 + 1)
-        if len(stdout) > 100 * 1024:
-            try:
-                proc.terminate()
-            except ProcessLookupError:
-                pass
-            await proc.wait()
-            log.write(
-                "[yellow]Diff is too large to display inline "
-                "(exceeds 100KB).[/yellow]"
+        if truncated:
+            self._write_log(
+                "Diff is too large to display inline (exceeds 100KB).",
+                style="yellow",
             )
             return
-        _, stderr = await proc.communicate()
-        
-        if proc.returncode == 0:
-            diff_text = stdout.decode(errors="replace")
-            if not diff_text.strip():
-                log.write("[gray]No modifications found.[/gray]")
+        if returncode != 0:
+            raise OSError(stderr.decode(errors="replace").strip())
+
+        diff_text = stdout.decode(errors="replace")
+        if not diff_text.strip():
+            self._write_log("No modifications found.", style="dim")
+            return
+        for line in diff_text.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                log.write(Text(line, style="green"))
+            elif line.startswith("-") and not line.startswith("---"):
+                log.write(Text(line, style="red"))
             else:
-                # Render lines with basic color formatting
-                for line in diff_text.splitlines():
-                    if line.startswith("+"):
-                        log.write(f"[green]{line}[/green]")
-                    elif line.startswith("-"):
-                        log.write(f"[red]{line}[/red]")
-                    else:
-                        log.write(line)
-        else:
-            log.write(f"[red]Failed to load diff: {stderr.decode().strip()}[/red]")
+                log.write(Text(line))
 
-    # 4.6 Safe Mutation Subprocess Execution (Committing, Pushing, Pulling)
-    @work(exclusive=True, group="git-mutations")
-    async def run_git_command(self, args: list[str]) -> None:
-        if not self.repo_path:
+    async def _run_git_command(self, args: list[str]) -> None:
+        if self.repo_path is None:
             return
-
-        self.busy = True
-        self.set_controls_disabled(True)
         log = self.query_one("#git-diff-viewer", RichLog)
         log.clear()
-        
-        log.write(f"[bold cyan]Running: git {shlex.join(args)}[/bold cyan]\n")
+        log.write(Text(f"Running: git {shlex.join(args)}", style="bold cyan"))
 
-        # Disable interactive terminal prompts to prevent blocking forever
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
+        env["GCM_INTERACTIVE"] = "Never"
         env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+        returncode, stdout, stderr = await self._capture_git(
+            args,
+            env=env,
+            timeout=15 * 60,
+        )
+        output = stdout.decode(errors="replace")
+        error = stderr.decode(errors="replace")
+        if output:
+            log.write(Text(output.rstrip()))
+        if error:
+            log.write(Text(error.rstrip(), style="red"))
+        if returncode != 0:
+            raise OSError(f"git exited with status {returncode}")
 
-        try:
-            self._active_subprocess = await asyncio.create_subprocess_exec(
-                "git", *args,
-                cwd=str(self.repo_path),
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT
-            )
+        log.write(Text("Git operation succeeded.", style="bold green"))
+        await self._load_repo_status()
 
-            while True:
-                line = await self._active_subprocess.stdout.readline()
-                if not line:
-                    break
-                log.write(line.decode(errors="replace").rstrip())
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        self.query_one("#btn-open-repo", Button).disabled = self.busy
+        self.query_one("#txt-repo-path", Input).disabled = self.busy
+        self.query_one("#git-changes-tree", Tree).disabled = self.busy
+        self.query_one("#btn-git-add-all", Button).disabled = not enabled
+        self.query_one("#btn-git-pull", Button).disabled = not enabled
+        self.query_one("#btn-git-push", Button).disabled = not enabled
+        self.query_one("#txt-commit-msg", Input).disabled = not enabled
+        self.query_one("#btn-git-commit", Button).disabled = not enabled
+        self.query_one("#btn-git-toggle-stage", Button).disabled = (
+            not enabled or self._selected_change is None
+        )
+        self.query_one("#btn-git-cancel", Button).disabled = not self.busy
 
-            await self._active_subprocess.wait()
+    def _write_log(self, message: str, *, style: str | None = None) -> None:
+        self.query_one("#git-diff-viewer", RichLog).write(
+            Text(message, style=style)
+        )
 
-            if self._active_subprocess.returncode == 0:
-                log.write("\n[bold green]Git operation succeeded.[/bold green]")
-            else:
-                log.write(f"\n[bold red]Git operation failed with exit code {self._active_subprocess.returncode}.[/bold red]")
-        except asyncio.CancelledError:
-            log.write("\n[bold yellow]Git operation cancelled by user.[/bold yellow]")
-        finally:
-            self._active_subprocess = None
-            self.busy = False
-            self.set_controls_disabled(False)
-            self.load_repo_status()
-
-    # 4.7 Event Dispatching
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-open-repo":
+        button_id = event.button.id
+        if button_id == "btn-git-cancel":
+            await self.cancel_active_operation()
+            return
+        if self.busy:
+            return
+        if button_id == "btn-open-repo":
             path = self.query_one("#txt-repo-path", Input).value.strip()
             if path:
                 self.validate_and_load_repo(path)
-        elif event.button.id == "btn-git-cancel":
-            await self.cancel_active_operation()
-        elif event.button.id == "btn-git-toggle-stage":
+        elif button_id == "btn-git-toggle-stage":
             change = self._selected_change
-            if change is not None and not self.busy:
-                self._mutation_worker = self.toggle_stage_file(
-                    change.path, change.staged
-                )
-        elif event.button.id == "btn-git-add-all":
-            if not self.busy:
-                self._mutation_worker = self.run_git_command(["add", "."])
-        elif event.button.id == "btn-git-pull":
-            if not self.busy:
-                # pull safely using fast-forward-only
-                self._mutation_worker = self.run_git_command(["pull", "--ff-only"])
-        elif event.button.id == "btn-git-push":
-            if not self.busy:
-                self._mutation_worker = self.run_git_command(["push"])
-        elif event.button.id == "btn-git-commit":
-            if self.busy:
-                return
-            msg_input = self.query_one("#txt-commit-msg", Input)
-            msg = msg_input.value.strip()
-            if msg:
-                msg_input.value = ""
-                self._mutation_worker = self.run_git_command(["commit", "-m", msg])
+            if change is not None:
+                self.toggle_stage_file(change.path, change.staged)
+        elif button_id == "btn-git-add-all":
+            self.run_git_command(["add", "-A"])
+        elif button_id == "btn-git-pull":
+            self.run_git_command(["pull", "--ff-only"])
+        elif button_id == "btn-git-push":
+            self.run_git_command(["push"])
+        elif button_id == "btn-git-commit":
+            self._commit_from_input()
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if self.busy:
+            return
         if event.input.id == "txt-commit-msg":
-            if self.busy:
-                return
-            msg = event.value.strip()
-            if msg:
-                event.input.value = ""
-                self._mutation_worker = self.run_git_command(["commit", "-m", msg])
+            self._commit_from_input()
         elif event.input.id == "txt-repo-path":
             path = event.value.strip()
             if path:
                 self.validate_and_load_repo(path)
+
+    def _commit_from_input(self) -> None:
+        message_input = self.query_one("#txt-commit-msg", Input)
+        message = message_input.value.strip()
+        if message:
+            message_input.value = ""
+            self.run_git_command(["commit", "-m", message])
