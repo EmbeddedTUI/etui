@@ -198,6 +198,14 @@ def test_stlink_gdb_port_in_default_settings() -> None:
     assert DEFAULT_SETTINGS["stlink_gdb_port"] == STLINK_GDB_PORT
 
 
+def test_lpc_link2_cmsis_dap_usb_probe_registered() -> None:
+    from etui.tabs.probe import CMSIS_DAP_INTERFACE, KNOWN_USB_PROBES
+    desc, driver, interface = KNOWN_USB_PROBES[(0x1FC9, 0x0090)]
+    assert desc == "NXP LPC-LINK2 CMSIS-DAP"
+    assert driver == "pyocd"
+    assert interface == CMSIS_DAP_INTERFACE
+
+
 # ---------------------------------------------------------------------------
 # Tests — tab registry
 # ---------------------------------------------------------------------------

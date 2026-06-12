@@ -3,8 +3,10 @@
 
 import asyncio
 import json
+import re
 import shutil
 from pathlib import Path
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical
@@ -20,7 +22,7 @@ from textual.widgets import Select
 # Available debugger backends: label -> command line (argv) launched as a
 # line-oriented interactive console driven over stdin/stdout.
 BACKENDS = {
-    "pyocd":   ["pyocd", "commander"],
+    "pyocd":   ["pyocd", "gdbserver"],
     "openocd": ["openocd"],
     "stlink":  ["st-util"],
     "gdb":     ["gdb", "--quiet", "--interpreter=mi2"],
@@ -58,7 +60,8 @@ TARGET_NONE = "__none__"
 
 # OpenOCD interface configs for the XDS110 in its two firmware modes.
 XDS110_NATIVE = "interface/xds110.cfg"
-XDS110_CMSISDAP = "interface/cmsis-dap.cfg"
+CMSIS_DAP_INTERFACE = "interface/cmsis-dap.cfg"
+XDS110_CMSISDAP = CMSIS_DAP_INTERFACE
 
 # MCU families selectable once an XDS110 probe is detected. They all share
 # one OpenOCD target config (SWD); the label sets the OpenOCD chip name and
@@ -82,6 +85,11 @@ KNOWN_USB_PROBES = {
     (0x0483, 0x374b): ("ST-LINK/V2.1",           "pyocd",   None),
     (0x0483, 0x374e): ("ST-LINK/V3",             "pyocd",   None),
     (0x0483, 0x374f): ("ST-LINK/V3E",            "pyocd",   None),
+    (0x1FC9, 0x0090): (
+        "NXP LPC-LINK2 CMSIS-DAP",
+        "pyocd",
+        CMSIS_DAP_INTERFACE,
+    ),
 }
 
 
@@ -204,6 +212,9 @@ class ProbeTab(Horizontal):
         self._probes: dict[str, dict] = {}
         # Selected MCU target chipname (e.g. "mspm0l") or None.
         self._target: str | None = None
+        # pyOCD target identifier configured by the user.
+        self._pyocd_target: str | None = None
+        self._custom_targets: set[str] = set()
         # LLDB target triple for the selected target.
         self._target_arch: str | None = None
         # Persisted connection settings (adapter speed, ports, ...).
@@ -260,8 +271,7 @@ class ProbeTab(Horizontal):
         elif event.select.id == "dbg-probe":
             self._select_probe(self.query_one("#dbg-probe", Select), str(event.value))
         elif event.select.id == "dbg-target":
-            chip_arch = TARGETS.get(str(event.value))
-            self._target, self._target_arch = chip_arch or (None, None)
+            self._select_target(str(event.value))
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "dbg-settings":
@@ -327,11 +337,43 @@ class ProbeTab(Horizontal):
         )
         if target_label != TARGET_NONE:
             self._target, self._target_arch = TARGETS[target_label]
+            self._pyocd_target = None
+        elif target:
+            target_label = str(settings.get("target", "")).strip()
+            self._custom_targets.add(target_label)
+            self._target = None
+            self._target_arch = None
+            self._pyocd_target = target_label
         try:
             target_select = self.query_one("#dbg-target", Select)
+            self._refresh_target_options(target_select)
             target_select.value = target_label
         except Exception:
             pass
+
+    def _refresh_target_options(self, target_select: Select) -> None:
+        options = [("Target...", TARGET_NONE)]
+        options.extend((label, label) for label in TARGETS)
+        options.extend(
+            (f"Configured: {target}", target)
+            for target in sorted(self._custom_targets)
+            if target not in TARGETS
+        )
+        target_select.set_options(options)
+
+    def _select_target(self, value: str) -> None:
+        chip_arch = TARGETS.get(value)
+        if chip_arch:
+            self._target, self._target_arch = chip_arch
+            self._pyocd_target = None
+        elif value and value != TARGET_NONE:
+            self._target = None
+            self._target_arch = None
+            self._pyocd_target = value
+        else:
+            self._target = None
+            self._target_arch = None
+            self._pyocd_target = None
 
     @staticmethod
     def _list_probes() -> list[dict]:
@@ -339,7 +381,8 @@ class ProbeTab(Horizontal):
 
         Combines pyocd's native probe enumeration with a USB VID:PID scan
         for known probes that pyocd cannot detect itself (e.g. TI XDS110).
-        Returns a list of dicts: {uid, desc, driver, interface}.
+        Returns normalized dictionaries containing identity, transport, and
+        backend metadata.
         """
         result: list[dict] = []
         seen_uids: set[str] = set()
@@ -349,13 +392,29 @@ class ProbeTab(Horizontal):
             from pyocd.probe.aggregator import DebugProbeAggregator
 
             for probe in DebugProbeAggregator.get_all_connected_probes():
-                uid = probe.unique_id
-                desc = probe.description or probe.product_name or "probe"
+                uid = str(probe.unique_id or "")
+                desc = (
+                    probe.description
+                    or getattr(probe, "product_name", None)
+                    or "probe"
+                )
+                desc = str(desc)
+                if not uid:
+                    continue
                 seen_uids.add(uid)
                 driver, interface = ProbeTab._classify(desc)
                 result.append(
-                    {"uid": uid, "desc": desc, "driver": driver,
-                     "interface": interface}
+                    {
+                        "uid": uid,
+                        "desc": desc,
+                        "driver": driver,
+                        "interface": interface,
+                        "transport": ProbeTab._transport(desc, interface),
+                        "firmware": ProbeTab._firmware_version(desc),
+                        "vid": getattr(probe, "vendor_id", None),
+                        "pid": getattr(probe, "product_id", None),
+                        "backend_uid": True,
+                    }
                 )
         except Exception:
             pass
@@ -371,22 +430,62 @@ class ProbeTab(Horizontal):
                     continue
                 desc, driver, interface = KNOWN_USB_PROBES[key]
                 serial = None
+                product = None
                 try:
                     serial = usb.util.get_string(dev, dev.iSerialNumber)
                 except Exception:
                     pass
-                uid = serial or f"{dev.idVendor:04x}:{dev.idProduct:04x}"
+                try:
+                    product = usb.util.get_string(dev, dev.iProduct)
+                except Exception:
+                    pass
+                bus = getattr(dev, "bus", None)
+                address = getattr(dev, "address", None)
+                location = (
+                    f"@{bus}:{address}"
+                    if bus is not None and address is not None
+                    else ""
+                )
+                uid = serial or (
+                    f"{dev.idVendor:04x}:{dev.idProduct:04x}{location}"
+                )
                 if uid in seen_uids:
                     continue
                 seen_uids.add(uid)
                 result.append(
-                    {"uid": uid, "desc": desc, "driver": driver,
-                     "interface": interface}
+                    {
+                        "uid": uid,
+                        "desc": desc,
+                        "driver": driver,
+                        "interface": interface,
+                        "transport": ProbeTab._transport(desc, interface),
+                        "firmware": ProbeTab._firmware_version(product or desc),
+                        "vid": dev.idVendor,
+                        "pid": dev.idProduct,
+                        "backend_uid": bool(serial),
+                    }
                 )
         except Exception:
             pass
 
         return result
+
+    @staticmethod
+    def _firmware_version(text: str) -> str | None:
+        match = re.search(r"\bV\d+(?:\.\d+)+\b", text, flags=re.IGNORECASE)
+        return match.group(0) if match else None
+
+    @staticmethod
+    def _transport(desc: str, interface: str | None) -> str:
+        normalized = desc.lower().replace("_", "-")
+        if interface == CMSIS_DAP_INTERFACE or "cmsis-dap" in normalized \
+                or "cmsis dap" in normalized:
+            return "cmsis-dap"
+        if "st-link" in normalized or "stlink" in normalized:
+            return "stlink"
+        if "xds110" in normalized:
+            return "xds110"
+        return "unknown"
 
     @staticmethod
     def _classify(desc: str) -> tuple[str, str | None]:
@@ -404,7 +503,13 @@ class ProbeTab(Horizontal):
             return "openocd", XDS110_NATIVE
         if "st-link" in d or "stlink" in d:
             return "pyocd", None
+        if "cmsis-dap" in d or "cmsis dap" in d or "lpc-link2" in d:
+            return "pyocd", CMSIS_DAP_INTERFACE
         return "pyocd", None
+
+    @staticmethod
+    def _valid_pyocd_target(target: str) -> bool:
+        return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", target))
 
     async def detect_probes(self) -> None:
         log = self.query_one(ProbeLog)
@@ -422,8 +527,17 @@ class ProbeTab(Horizontal):
             label = f"{p['desc']} [{p['uid']}]"
             self._probes[p["uid"]] = p
             options.append((label, p["uid"]))
+            metadata = []
+            if p.get("vid") is not None and p.get("pid") is not None:
+                metadata.append(f"{p['vid']:04x}:{p['pid']:04x}")
+            if p.get("transport"):
+                metadata.append(p["transport"])
+            if p.get("firmware"):
+                metadata.append(p["firmware"])
+            details = " ".join(metadata)
             log.write(
-                f"[green]found:[/green] {label}  [dim]driver={p['driver']}[/dim]"
+                f"[green]found:[/green] {escape(label)}  "
+                f"[dim]driver={p['driver']} {escape(details)}[/dim]"
             )
         if not probes:
             log.write("[yellow]no debug probes found[/yellow]")
@@ -434,7 +548,7 @@ class ProbeTab(Horizontal):
             # value drives on_select_changed, which also switches backend.
             self._select_probe(probe_select, probes[0]["uid"])
             log.write(
-                f"[cyan]selected {probes[0]['desc']} "
+                f"[cyan]selected {escape(probes[0]['desc'])} "
                 f"(backend: {self._backend})[/cyan]"
             )
         else:
@@ -465,15 +579,30 @@ class ProbeTab(Horizontal):
         if probe_driver and probe_driver != "pyocd" and probe_driver in BACKENDS:
             self._backend = probe_driver
             self.query_one("#dbg-backend", Select).value = self._backend
-        # An XDS110 (OpenOCD) probe can drive several MCU families - ask the
-        # user which one before connecting.
+        # Debug adapters do not identify the attached MCU. Every GDB-server
+        # backend therefore requires a compatible explicit target.
         target_select = self.query_one("#dbg-target", Select)
-        is_xds110 = bool(self._probe and self._probe.get("interface"))
-        target_select.disabled = not is_xds110
-        if is_xds110 and self._target is None:
-            self.query_one(ProbeLog).write(
-                "[yellow]select target MCU (MSPM0L / MSPM0G / MSPM0C)[/yellow]"
-            )
+        needs_target = bool(
+            self._probe
+            and self._probe.get("driver") in {"pyocd", "openocd"}
+        )
+        target_select.disabled = not needs_target
+        missing_target = (
+            self._pyocd_target is None
+            if self._backend == "pyocd"
+            else self._target is None
+        )
+        if needs_target and missing_target:
+            if self._backend == "pyocd":
+                self.query_one(ProbeLog).write(
+                    "[yellow]configure the attached MCU's pyOCD target ID in "
+                    "Settings (example: lpc55s69; list with "
+                    "'pyocd list --targets -n lpc')[/yellow]"
+                )
+            elif self._backend == "openocd":
+                self.query_one(ProbeLog).write(
+                    "[yellow]select a packaged OpenOCD target profile[/yellow]"
+                )
 
     def _build_argv(self, log: "ProbeLog") -> list[str] | None:
         """ Build the backend command line for the selected probe. """
@@ -487,8 +616,28 @@ class ProbeTab(Horizontal):
                     f"'{self._probe['driver']}' backend, not pyocd[/red]"
                 )
                 return None
+            if not self._pyocd_target:
+                log.write(
+                    "[red]configure an explicit pyOCD target ID in Settings "
+                    "before starting this probe[/red]"
+                )
+                return None
+            if not self._valid_pyocd_target(self._pyocd_target):
+                log.write("[red]the configured pyOCD target ID is invalid[/red]")
+                return None
             if self._probe:
+                if not self._probe.get("backend_uid", True):
+                    log.write(
+                        "[red]the probe was found by USB but has no usable "
+                        "serial; check pyOCD support and USB permissions[/red]"
+                    )
+                    return None
                 argv += ["--uid", self._probe["uid"]]
+            argv += ["--target", self._pyocd_target]
+            argv += ["--port", str(self._settings["gdb_port"])]
+            argv += ["--telnet-port", str(self._settings["telnet_port"])]
+            frequency_hz = int(self._settings["adapter_speed_khz"]) * 1000
+            argv += ["--frequency", str(frequency_hz), "--no-wait"]
         elif backend == "openocd":
             interface = self._probe.get("interface") if self._probe else None
             if not interface:
@@ -559,7 +708,7 @@ class ProbeTab(Horizontal):
         argv[0] = backend_exe
 
         if self._probe:
-            log.write(f"[cyan]using probe {self._probe['uid']}[/cyan]")
+            log.write(f"[cyan]using probe {escape(self._probe['uid'])}[/cyan]")
         self._proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.PIPE,
@@ -778,6 +927,14 @@ class ProbeTab(Horizontal):
                 self.post_message(LldbStart(port, self._target_arch))
             # pyocd: track fatal errors so we can suggest stlink on exit.
             elif self._backend == "pyocd":
+                if (
+                    not self._lldb_opened
+                    and "gdb server listening on port" in tl
+                ):
+                    self._lldb_opened = True
+                    self.post_message(
+                        LldbStart(self._settings["gdb_port"], self._target_arch)
+                    )
                 for pat in PYOCD_FATAL_PATTERNS:
                     if pat in tl:
                         self._pyocd_failed = True

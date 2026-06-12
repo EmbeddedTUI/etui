@@ -21,7 +21,7 @@ DEFAULT_SETTINGS = {
     },
     "probe": {
         "backend": "pyocd",
-        "target": "MSPM0L",
+        "target": "",
         "adapter_speed_khz": 4000,
         "gdb_port": 3333,
         "telnet_port": 4444,
