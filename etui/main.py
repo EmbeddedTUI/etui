@@ -69,8 +69,8 @@ class EtuiApp(App):
             display: none;
         }
 
-        /* Push the About tab (last one) to the far right of the tab bar. */
-        #--content-tab-about {
+        /* Push the Theme and About tabs to the far right of the tab bar. */
+        #--content-tab-theme, #--content-tab-about {
             dock: right;
         }
 
@@ -106,24 +106,24 @@ class EtuiApp(App):
                 yield FilesTab()
             with TabPane("Console", id="console"):
                 yield ConsoleTab()
-            with TabPane("Serial", id="serial"):
-                yield SerialTab()
-            with TabPane("Debugger", id="debugger"):
-                yield DebuggerTab()
-            with TabPane("LLDB", id="lldb"):
-                yield LldbTab()
-            with TabPane("Theme", id="theme"):
-                yield ThemeTab()
+            with TabPane("Tools", id="tools"):
+                yield ToolsTab()
             with TabPane("Git", id="git"):
                 yield GitTab()
             with TabPane("GitHub", id="github"):
                 yield GitHubTab()
             with TabPane("CMake", id="cmake"):
                 yield CMakeTab()
-            with TabPane("Tools", id="tools"):
-                yield ToolsTab()
+            with TabPane("Serial", id="serial"):
+                yield SerialTab()
+            with TabPane("Debugger", id="debugger"):
+                yield DebuggerTab()
+            with TabPane("LLDB", id="lldb"):
+                yield LldbTab()
             with TabPane("Venv", id="venv"):
                 yield VenvTab()
+            with TabPane("Theme", id="theme"):
+                yield ThemeTab()
             with TabPane("About", id="about"):
                 yield AboutTab()
         yield Input(id="main-input")
