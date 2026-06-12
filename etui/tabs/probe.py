@@ -36,6 +36,17 @@ PYOCD_FATAL_PATTERNS = [
     "failed to connect",
     "unable to open",
     "usb error",
+    "not recognized",          # target type not in pyocd's built-in list
+    "no pack installed",
+    "pack not installed",
+]
+
+# pyocd output patterns that indicate a missing CMSIS pack specifically.
+PYOCD_PACK_PATTERNS = [
+    "target type",
+    "not recognized",
+    "use 'pyocd pack",
+    "use \"pyocd pack",
 ]
 
 # Sentinel values for the Select widgets.
@@ -197,6 +208,8 @@ class ProbeTab(Horizontal):
         self._lldb_opened = False
         # Set when pyocd exits with a fatal error so the UI can suggest stlink.
         self._pyocd_failed = False
+        # Target name extracted from a pyocd "not recognized" error, if any.
+        self._missing_pack: str | None = None
 
     def compose(self) -> ComposeResult:
         if __package__:
@@ -204,7 +217,6 @@ class ProbeTab(Horizontal):
         else:
             from tools import ToolWarningBanner
         yield ToolWarningBanner("openocd", "OpenOCD", id="openocd-tool-warning")
-        yield ToolWarningBanner("gnu-arm", "GNU Arm Toolchain", id="gnu-arm-tool-warning")
 
         with Vertical():
             with Horizontal(id="probe-controls"):
@@ -233,6 +245,7 @@ class ProbeTab(Horizontal):
                 yield Button("Start", id="dbg-start", variant="success")
                 yield Button("Stop", id="dbg-stop", variant="error")
                 yield Button("Kill stale", id="dbg-kill-stale", variant="warning")
+                yield Button("Install Pack", id="dbg-install-pack", variant="warning")
             yield ProbeLog()
             yield Input(placeholder="debugger command", id="dbg-input")
 
@@ -256,6 +269,8 @@ class ProbeTab(Horizontal):
             await self.stop()
         elif event.button.id == "dbg-kill-stale":
             await self.kill_stale()
+        elif event.button.id == "dbg-install-pack":
+            await self._install_pack()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         command = event.value.strip()
@@ -531,6 +546,9 @@ class ProbeTab(Horizontal):
         self._lldb_opened = False
         self.run_worker(self._read_output(), exclusive=False)
 
+    def on_mount(self) -> None:
+        self.query_one("#dbg-install-pack", Button).display = False
+
     def on_unmount(self) -> None:
         # Avoid orphaned debugger processes holding the probe / ports.
         if self._proc is not None and self._proc.returncode is None:
@@ -586,6 +604,58 @@ class ProbeTab(Horizontal):
         else:
             log.write("[yellow]no stale processes found[/yellow]")
 
+    @staticmethod
+    def _extract_target_from_line(text: str) -> str:
+        """Extract the target chip name from a pyocd 'not recognized' line."""
+        # Expected form: "... Target type stm32f746zgtx not recognized ..."
+        parts = text.split()
+        for i, word in enumerate(parts):
+            if word.lower() == "type" and i + 1 < len(parts):
+                candidate = parts[i + 1].rstrip(".")
+                if candidate.lower() not in ("not", "is", "the", "a"):
+                    return candidate
+        return ""
+
+    async def _install_pack(self) -> None:
+        """Run 'pyocd pack update && pyocd pack install <target>' and stream output."""
+        target = self._missing_pack
+        if not target:
+            return
+        log = self.query_one(ProbeLog)
+        btn = self.query_one("#dbg-install-pack", Button)
+        btn.disabled = True
+        log.write(f"[cyan]installing pyocd pack for {target}...[/cyan]")
+
+        async def _run(args: list[str]) -> int:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            assert proc.stdout is not None
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                log.write(line.decode(errors="replace").rstrip())
+            await proc.wait()
+            return proc.returncode or 0
+
+        pyocd_exe = shutil.which("pyocd") or "pyocd"
+        rc = await _run([pyocd_exe, "pack", "update"])
+        if rc != 0:
+            log.write("[red]pyocd pack update failed[/red]")
+            btn.disabled = False
+            return
+        rc = await _run([pyocd_exe, "pack", "install", target])
+        if rc == 0:
+            log.write(f"[green]pack installed — press Start to retry[/green]")
+            btn.display = False
+            self._missing_pack = None
+        else:
+            log.write(f"[red]pyocd pack install {target} failed[/red]")
+            btn.disabled = False
+
     async def send_command(self, command: str) -> None:
         log = self.query_one(ProbeLog)
         if self._proc is None or self._proc.returncode is not None:
@@ -631,6 +701,18 @@ class ProbeTab(Horizontal):
                 for pat in PYOCD_FATAL_PATTERNS:
                     if pat in tl:
                         self._pyocd_failed = True
+                        # Show Install Pack button for missing CMSIS packs.
+                        if any(p in tl for p in PYOCD_PACK_PATTERNS):
+                            target_name = self._extract_target_from_line(text)
+                            if target_name:
+                                self._missing_pack = target_name
+                                btn = self.query_one("#dbg-install-pack", Button)
+                                btn.label = f"Install Pack: {target_name}"
+                                btn.display = True
+                            log.write(
+                                f"[yellow]hint: pyocd pack update && "
+                                f"pyocd pack install {target_name or '<target>'}[/yellow]"
+                            )
                         break
         # Process exited — offer stlink fallback if pyocd failed.
         if self._pyocd_failed and shutil.which("st-util"):
