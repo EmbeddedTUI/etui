@@ -5,8 +5,25 @@ build-backend = "pdm.backend"
 [project]
 name = "etui"
 version = "0.2.0"
-description = "Add your description here"
+description = "Terminal-based IDE for embedded firmware development"
 readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Pawel Wodnicki", email = "hbbrbasic@gmail.com" },
+]
+keywords = ["embedded", "tui", "debugger", "firmware", "arm", "pyocd", "lldb"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: Software Development :: Embedded Systems",
+    "Topic :: Terminals",
+]
 requires-python = ">=3.13,<3.15"
 dependencies = [
     "textual>=8.1.1",
@@ -17,6 +34,9 @@ dependencies = [
     "packaging>=22.0",
     "pyyaml>=6.0.3",
 ]
+
+[project.urls]
+Repository = "https://github.com/32bitmicroLLC/EmbeddedTUI"
 
 [project.scripts]
 etui = "etui.main:main"
