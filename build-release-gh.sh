@@ -20,9 +20,11 @@ fi
 
 # Retrieve version argument
 VERSION=$1
-if [ -z "$VERSION" ]; then
+while [ -z "$VERSION" ]; do
     read -p "Enter version tag to release (e.g., v0.1.0): " VERSION
-fi
+    # Strip leading/trailing whitespaces
+    VERSION=$(echo "$VERSION" | xargs)
+done
 
 # Basic formatting check (should start with 'v')
 if [[ ! "$VERSION" =~ ^v[0-9] ]]; then
@@ -36,7 +38,15 @@ fi
 
 # Trigger the GitHub Actions workflow via dispatch
 echo "Triggering GitHub Actions release workflow 'Package etui Release' for tag '$VERSION'..."
-gh workflow run package.yml -f version="$VERSION"
+if ! gh workflow run package.yml -f version="$VERSION"; then
+    echo ""
+    echo "Error: Failed to trigger workflow."
+    echo "This can happen if:"
+    echo "  1. The workflow file '.github/workflows/package.yml' is not pushed to the remote repository yet."
+    echo "  2. You do not have write/push permissions for this repository."
+    echo "Please ensure you have pushed your latest local changes (git push) and retry."
+    exit 1
+fi
 
 # Wait a moment for the run to register
 sleep 3
