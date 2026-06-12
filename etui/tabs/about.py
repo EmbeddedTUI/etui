@@ -147,6 +147,7 @@ class AboutTab(Vertical):
             with Center():
                 with Vertical(id="about-info"):
                     yield Static("[bold]etui[/bold] — Embedded TUI")
+                    yield Static("[italic]Per aspera ad astra[/italic]")
                     yield Static(COPYRIGHT)
                     yield Static("")
                     yield Static(
