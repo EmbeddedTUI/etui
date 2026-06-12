@@ -27,4 +27,5 @@ includes = ["etui/"]
 dev = [
     "textual-dev>=1.8.0",
     "pyinstaller>=6.10",
+    "pytest>=9.0.3",
 ]
