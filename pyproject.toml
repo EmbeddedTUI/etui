@@ -21,4 +21,5 @@ etui = "etui.main:main"
 [dependency-groups]
 dev = [
     "textual-dev>=1.8.0",
+    "pyinstaller>=4.5.1",
 ]
