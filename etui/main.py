@@ -22,6 +22,7 @@ if __package__:
     from .tabs.venv import VenvTab
     from .tabs.git import GitTab, RepositoryChanged
     from .tabs.github import GitHubTab
+    from .tabs.cmake import CMakeTab
 else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
@@ -33,6 +34,7 @@ else:
     from tabs.venv import VenvTab
     from tabs.git import GitTab, RepositoryChanged
     from tabs.github import GitHubTab
+    from tabs.cmake import CMakeTab
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -104,6 +106,8 @@ class EtuiApp(App):
                 yield GitTab()
             with TabPane("GitHub", id="github"):
                 yield GitHubTab()
+            with TabPane("CMake", id="cmake"):
+                yield CMakeTab()
             with TabPane("Venv", id="venv"):
                 yield VenvTab()
             with TabPane("About", id="about"):
@@ -176,6 +180,11 @@ class EtuiApp(App):
                 self.query_one("#btn-mode-issues").focus()
             except Exception:
                 pass
+        elif pane_id == "cmake":
+            try:
+                self.query_one("#txt-cmake-build").focus()
+            except Exception:
+                pass
         elif pane_id == "venv":
             try:
                 self.query_one("#venv-project-path").focus()
@@ -215,6 +224,18 @@ class EtuiApp(App):
             except Exception:
                 pass
 
+        if pane_id != "cmake":
+            try:
+                cmake_tab = self.query_one(CMakeTab)
+                if cmake_tab.busy:
+                    self.run_worker(
+                        cmake_tab.cancel_active_operation(),
+                        name="cancel-cmake-operation",
+                        exit_on_error=False,
+                    )
+            except Exception:
+                pass
+
     def on_command_message(self, message: CommandMessage) -> None:
         tabs = self.query_one(TabbedContent)
         if tabs.active == "serial":
@@ -247,6 +268,13 @@ class EtuiApp(App):
         try:
             github_tab = self.query_one(GitHubTab)
             self.run_worker(github_tab.change_repository(Path(message.path)))
+        except Exception:
+            pass
+
+        # Update CMakeTab repo
+        try:
+            cmake_tab = self.query_one(CMakeTab)
+            self.run_worker(cmake_tab.change_repository(Path(message.path)))
         except Exception:
             pass
 
