@@ -64,9 +64,9 @@ XDS110_CMSISDAP = "interface/cmsis-dap.cfg"
 # one OpenOCD target config (SWD); the label sets the OpenOCD chip name and
 # the LLDB target architecture. label -> (chipname, lldb_arch).
 TARGETS = {
-    "MSPM0L": ("mspm0l", "armv6m"),
-    "MSPM0G": ("mspm0g", "armv6m"),
-    "MSPM0C": ("mspm0c", "armv6m"),
+    "MSPM0L": ("mspm0l", "thumbv6m-none-eabi"),
+    "MSPM0G": ("mspm0g", "thumbv6m-none-eabi"),
+    "MSPM0C": ("mspm0c", "thumbv6m-none-eabi"),
 }
 MSPM0_TARGET_CFG = "target/ti/mspm0.cfg"
 
@@ -204,7 +204,7 @@ class ProbeTab(Horizontal):
         self._probes: dict[str, dict] = {}
         # Selected MCU target chipname (e.g. "mspm0l") or None.
         self._target: str | None = None
-        # LLDB architecture for the selected target (e.g. "armv6m") or None.
+        # LLDB target triple for the selected target.
         self._target_arch: str | None = None
         # Persisted connection settings (adapter speed, ports, ...).
         self._settings = load_settings()

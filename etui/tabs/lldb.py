@@ -235,7 +235,7 @@ class LldbLog(RichLog):
         self.write("[dim]use [+]/[-] to collapse, up/down to reorder[/dim]")
 
 
-class LldbTab(Horizontal):
+class LldbTab(Vertical):
     """ LLDB tab - lldb session attached to a gdb remote, with a dashboard.
 
     Opened automatically once the hardware debugger (OpenOCD) has started
@@ -246,8 +246,26 @@ class LldbTab(Horizontal):
     """
 
     DEFAULT_CSS = """
-        LldbTab #lldb-console { width: 1fr; }
-        LldbTab #lldb-dashboard { width: 1fr; border-left: solid $accent; }
+        LldbTab { height: 1fr; }
+        LldbTab #lldb-main { height: 1fr; }
+        LldbTab #lldb-toolbar {
+            height: 3;
+            padding: 0 1;
+            background: $surface;
+        }
+        LldbTab #lldb-executable-label {
+            width: auto;
+            height: 3;
+            content-align: left middle;
+            margin-right: 1;
+        }
+        LldbTab #lldb-executable { width: 1fr; }
+        LldbTab #lldb-load-executable {
+            width: 18;
+            margin-left: 1;
+        }
+        LldbTab #lldb-console { width: 2fr; }
+        LldbTab #lldb-dashboard { width: 3fr; border-left: solid $accent; }
         LldbTab #lldb-sections { height: 1fr; }
         LldbTab #lldb-controls { height: 3; dock: bottom; }
         LldbTab #lldb-controls Button {
@@ -264,6 +282,7 @@ class LldbTab(Horizontal):
         super().__init__()
         self._port = port
         self._arch = arch
+        self._executable: Path | None = None
         self._proc: asyncio.subprocess.Process | None = None
         # Dashboard parsing state and configuration.
         self._in_dash = False
@@ -283,6 +302,9 @@ class LldbTab(Horizontal):
             ]
             theme = str(settings.get("theme", DEFAULT_THEME))
             self._theme_name = theme if theme in THEMES else DEFAULT_THEME
+            executable = str(settings.get("executable", "")).strip()
+            if executable:
+                self._executable = Path(executable).expanduser().resolve()
         self._theme = THEMES[self._theme_name]
         self._stop_hook_id: int | None = None
 
@@ -291,21 +313,29 @@ class LldbTab(Horizontal):
             from .tools import ToolWarningBanner
         else:
             from tools import ToolWarningBanner
-        yield ToolWarningBanner("llvm-embedded", "LLVM Embedded Toolchain", id="llvm-tool-warning")
-
-        with Vertical(id="lldb-console"):
-            yield LldbLog()
-            yield Input(placeholder="lldb command", id="lldb-input")
-        with Vertical(id="lldb-dashboard"):
-            with VerticalScroll(id="lldb-sections"):
-                for name in self._layout:
-                    yield DashboardSection(
-                        name, SECTIONS[name][0], name in self._collapsed,
-                        self._sc("header"),
-                    )
-            with Horizontal(id="lldb-controls"):
-                for label, bid, _cmd in CONTROLS:
-                    yield Button(label, id=bid)
+        yield ToolWarningBanner("lldb", "LLDB", id="lldb-tool-warning")
+        with Horizontal(id="lldb-toolbar"):
+            yield Static("Firmware ELF:", id="lldb-executable-label")
+            yield Input(
+                value=str(self._executable or ""),
+                placeholder="Path to firmware .elf for symbols and source",
+                id="lldb-executable",
+            )
+            yield Button("Load / Reconnect", id="lldb-load-executable")
+        with Horizontal(id="lldb-main"):
+            with Vertical(id="lldb-console"):
+                yield LldbLog()
+                yield Input(placeholder="lldb command", id="lldb-input")
+            with Vertical(id="lldb-dashboard"):
+                with VerticalScroll(id="lldb-sections"):
+                    for name in self._layout:
+                        yield DashboardSection(
+                            name, SECTIONS[name][0], name in self._collapsed,
+                            self._sc("header"),
+                        )
+                with Horizontal(id="lldb-controls"):
+                    for label, bid, _cmd in CONTROLS:
+                        yield Button(label, id=bid)
 
     async def on_mount(self) -> None:
         self.query_one(LldbLog).write(
@@ -379,6 +409,9 @@ class LldbTab(Horizontal):
             pass
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "lldb-load-executable":
+            await self._load_executable_and_reconnect()
+            return
         if event.button.id == "ctl-restart":
             await self.restart()
             return
@@ -394,6 +427,45 @@ class LldbTab(Horizontal):
         if event.button.id in CONTROL_REFRESH:
             await self.refresh_dashboard()
 
+    async def _load_executable_and_reconnect(self) -> None:
+        value = self.query_one("#lldb-executable", Input).value.strip()
+        executable: Path | None = None
+        if value:
+            executable = Path(value).expanduser().resolve()
+            if not executable.is_file():
+                self.notify(
+                    f"Firmware executable does not exist: {value}",
+                    severity="error",
+                )
+                return
+            try:
+                with executable.open("rb") as firmware:
+                    magic = firmware.read(4)
+                if magic != b"\x7fELF":
+                    self.notify(
+                        f"Firmware executable is not an ELF file: {value}",
+                        severity="error",
+                    )
+                    return
+            except OSError as error:
+                self.notify(f"Could not read firmware ELF: {error}", severity="error")
+                return
+
+        self._executable = executable
+        manager = getattr(self.app, "settings_manager", None)
+        if manager is not None:
+            manager.settings["lldb"]["executable"] = str(executable or "")
+            try:
+                manager.save_settings()
+            except OSError as error:
+                self.notify(f"Could not save LLDB settings: {error}", severity="error")
+                return
+
+        if self._port is None:
+            self.notify("Firmware ELF saved; start the probe to connect.")
+            return
+        await self.connect(self._port, self._arch)
+
     async def _rebuild_sections(self) -> None:
         container = self.query_one("#lldb-sections", VerticalScroll)
         await container.remove_children()
@@ -408,12 +480,20 @@ class LldbTab(Horizontal):
 
     # ------------------------------------------------------------------ lldb
 
+    def _target_setup_command(self) -> str | None:
+        if self._executable and self._executable.is_file():
+            arch_arg = f" --arch {self._arch}" if self._arch else ""
+            return f"target create{arch_arg} {json.dumps(str(self._executable))}"
+        if self._arch:
+            return f"settings set target.default-arch {self._arch}"
+        return None
+
     async def start(self) -> None:
         log = self.query_one(LldbLog)
         
         lldb_path = "lldb"
         if hasattr(self.app, "tool_registry"):
-            res = self.app.tool_registry.get_result("llvm-embedded")
+            res = self.app.tool_registry.get_result("lldb")
             if res and res.state.value == "Installed":
                 for exe in res.executables:
                     if exe.name == "lldb" and exe.path:
@@ -431,10 +511,16 @@ class LldbTab(Horizontal):
         )
         log.write("[green]lldb started[/green]")
         self.run_worker(self._read_output(), exclusive=False)
-        # Set the architecture before connecting so lldb does not probe
-        # bogus memory while auto-detecting the target.
-        if self._arch:
-            await self._send_raw(f"settings set target.default-arch {self._arch}")
+        target_setup = self._target_setup_command()
+        if target_setup:
+            await self._send_raw(target_setup)
+        if self._executable and self._executable.is_file():
+            log.write(f"[green]loaded symbols:[/green] {self._executable}")
+        elif self._arch:
+            log.write(
+                "[yellow]no firmware ELF loaded; symbols, source, and exact "
+                "disassembly boundaries are unavailable[/yellow]"
+            )
         # Connect to the OpenOCD gdb server.
         await self.send_command(f"gdb-remote localhost:{self._port}")
         # Install a stop-hook that redraws the dashboard on every stop, then

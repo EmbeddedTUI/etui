@@ -126,7 +126,6 @@ TOOL_CATALOG = (
             ExecutableProbe("clang", ("--version",)),
             ExecutableProbe("clang++", ("--version",)),
             ExecutableProbe("lld", ("--version",)),
-            ExecutableProbe("lldb", ("--version",)),
             ExecutableProbe("llvm-objcopy", ("--version",)),
             ExecutableProbe("llvm-size", ("--version",)),
         ),
@@ -139,6 +138,19 @@ TOOL_CATALOG = (
             "winget": PackagePlan("winget", ("LLVM.LLVM",), "https://github.com/ARM-software/LLVM-embedded-toolchain-for-Arm"),
         },
         validator_name="validate_llvm_arm",
+    ),
+    ToolDefinition(
+        tool_id="lldb",
+        display_name="LLDB Debugger",
+        probes=(ExecutableProbe("lldb", ("--version",)),),
+        documentation_url="https://lldb.llvm.org/",
+        package_plans={
+            "apt": PackagePlan("apt-get", ("lldb",), "https://lldb.llvm.org/"),
+            "dnf": PackagePlan("dnf", ("lldb",), "https://lldb.llvm.org/"),
+            "pacman": PackagePlan("pacman", ("lldb",), "https://lldb.llvm.org/"),
+            "brew": PackagePlan("brew", ("llvm",), "https://lldb.llvm.org/"),
+            "winget": PackagePlan("winget", ("LLVM.LLVM",), "https://lldb.llvm.org/"),
+        },
     ),
     ToolDefinition(
         tool_id="git",

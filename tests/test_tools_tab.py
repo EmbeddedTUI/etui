@@ -153,5 +153,16 @@ class ToolsTabUnitTests(unittest.IsolatedAsyncioTestCase):
             banner.check_status()
             self.assertFalse(banner.display)
 
+    def test_lldb_is_a_standalone_tool(self) -> None:
+        from etui.tabs.tools import TOOL_BY_ID
+
+        lldb = TOOL_BY_ID["lldb"]
+        self.assertEqual(lldb.display_name, "LLDB Debugger")
+        self.assertEqual([probe.name for probe in lldb.probes], ["lldb"])
+        self.assertNotIn(
+            "lldb",
+            [probe.name for probe in TOOL_BY_ID["llvm-embedded"].probes],
+        )
+
 if __name__ == "__main__":
     unittest.main()

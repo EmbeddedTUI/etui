@@ -32,6 +32,7 @@ DEFAULT_SETTINGS = {
         "theme": "vibrant",
         "layout": ["registers", "assembly", "stack", "backtrace"],
         "collapsed": [],
+        "executable": "",
     },
     "tools": {
         "custom_paths": [],
