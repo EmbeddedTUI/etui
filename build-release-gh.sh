@@ -36,6 +36,10 @@ if [[ ! "$VERSION" =~ ^v[0-9] ]]; then
     fi
 fi
 
+# Push local changes to ensure the remote repository is in sync
+echo "Pushing local commits to remote repository..."
+git push
+
 # Trigger the GitHub Actions workflow via dispatch
 echo "Triggering GitHub Actions release workflow 'Package etui Release' for tag '$VERSION'..."
 if ! gh workflow run package.yml -f version="$VERSION"; then
