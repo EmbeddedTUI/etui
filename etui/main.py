@@ -16,6 +16,7 @@ if __package__:
     from .tabs.lldb import LldbTab
     from .tabs.theme import ThemeTab, ThemeChanged
     from .tabs.serial import SerialTab
+    from .tabs.venv import VenvTab
 else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
@@ -24,6 +25,7 @@ else:
     from tabs.lldb import LldbTab
     from tabs.theme import ThemeTab, ThemeChanged
     from tabs.serial import SerialTab
+    from tabs.venv import VenvTab
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -91,6 +93,8 @@ class EtuiApp(App):
                 yield LldbTab()
             with TabPane("Theme", id="theme"):
                 yield ThemeTab()
+            with TabPane("Venv", id="venv"):
+                yield VenvTab()
             with TabPane("About", id="about"):
                 yield AboutTab()
         yield Input(id="main-input")
@@ -151,6 +155,20 @@ class EtuiApp(App):
                 self.query_one("#lldb-input").focus()
             except Exception:
                 pass
+        elif pane_id == "venv":
+            try:
+                self.query_one("#venv-project-path").focus()
+            except Exception:
+                pass
+
+        if pane_id != "venv":
+            venv_tab = self.query_one(VenvTab)
+            if venv_tab.is_busy:
+                self.run_worker(
+                    venv_tab.cancel_active_operation(),
+                    name="cancel-venv-operation",
+                    exit_on_error=False,
+                )
 
     def on_command_message(self, message: CommandMessage) -> None:
         tabs = self.query_one(TabbedContent)
