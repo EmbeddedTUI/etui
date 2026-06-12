@@ -29,7 +29,6 @@ class ConsoleTab(Horizontal):
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await proc.communicate()
-            output = stdout.decode().strip()
             if stdout:                                                                                                                               
                 log.write(stdout.decode(errors="replace").rstrip())                                                                                  
             if stderr:                                                                                                                               

@@ -1,0 +1,85 @@
+name: Package etui Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            out_name: etui-linux
+          - os: macos-latest
+            out_name: etui-macos
+          - os: windows-latest
+            out_name: etui-windows.exe
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+        cache: 'pip'
+
+    - name: Install System Dependencies (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libusb-1.0-0-dev
+
+    - name: Install Project Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install .
+        pip install pyinstaller
+
+    - name: Run PyInstaller
+      run: |
+        pyinstaller etui.spec
+
+    - name: Rename Output Binary
+      shell: bash
+      run: |
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          mv dist/etui.exe dist/${{ matrix.out_name }}
+        else
+          mv dist/etui dist/${{ matrix.out_name }}
+        fi
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: etui-${{ matrix.os }}
+        path: dist/${{ matrix.out_name }}
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Download Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Create GitHub Release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create ${{ github.ref_name }} \
+          artifacts/etui-ubuntu-latest/etui-linux \
+          artifacts/etui-macos-latest/etui-macos \
+          artifacts/etui-windows-latest/etui-windows.exe \
+          --title "Release ${{ github.ref_name }}" \
+          --generate-notes

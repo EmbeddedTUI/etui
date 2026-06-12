@@ -88,15 +88,52 @@ class FilesTab(Horizontal):
             display.update(self.get_file_details(self.current_path))
         else:
             try:
-                # Use Syntax.from_path to read and highlight the file
-                syntax = Syntax.from_path(
-                    str(self.current_path),
-                    line_numbers=True,
-                    word_wrap=False,
-                    indent_guides=True,
-                    theme="monokai"
-                )
-                display.update(syntax)
+                # Check file size to prevent freezing on large files
+                try:
+                    file_size = os.path.getsize(self.current_path)
+                except Exception:
+                    file_size = 0
+
+                MAX_HIGHLIGHT_SIZE = 250 * 1024  # 250 KB
+                if file_size > MAX_HIGHLIGHT_SIZE:
+                    # Load only the first 500 lines to prevent UI freezing
+                    lines = []
+                    with open(self.current_path, "r", encoding="utf-8", errors="replace") as f:
+                        for _ in range(500):
+                            line = f.readline()
+                            if not line:
+                                break
+                            lines.append(line)
+                    content = "".join(lines)
+                    content += "\n\n... [TRUNCATED - File is larger than 250KB] ...\n"
+                    
+                    try:
+                        from pygments.lexers import get_lexer_for_filename
+                        lexer = get_lexer_for_filename(str(self.current_path))
+                        lexer_name = lexer.aliases[0] if lexer.aliases else lexer.name
+                    except Exception:
+                        lexer_name = "text"
+                        
+                    syntax = Syntax(
+                        content,
+                        lexer_name,
+                        line_numbers=True,
+                        word_wrap=False,
+                        indent_guides=True,
+                        theme="monokai"
+                    )
+                    display.update(syntax)
+                    self.notify("Large file detected: showing first 500 lines only", severity="warning")
+                else:
+                    # Use Syntax.from_path to read and highlight the file
+                    syntax = Syntax.from_path(
+                        str(self.current_path),
+                        line_numbers=True,
+                        word_wrap=False,
+                        indent_guides=True,
+                        theme="monokai"
+                    )
+                    display.update(syntax)
             except Exception:
                 # Fallback to details for non-text/binary files
                 try:
