@@ -23,6 +23,7 @@ if __package__:
     from .tabs.git import GitTab, RepositoryChanged
     from .tabs.github import GitHubTab
     from .tabs.cmake import CMakeTab
+    from .tabs.tools import ToolsTab
 else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
@@ -35,6 +36,7 @@ else:
     from tabs.git import GitTab, RepositoryChanged
     from tabs.github import GitHubTab
     from tabs.cmake import CMakeTab
+    from tabs.tools import ToolsTab
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -108,6 +110,8 @@ class EtuiApp(App):
                 yield GitHubTab()
             with TabPane("CMake", id="cmake"):
                 yield CMakeTab()
+            with TabPane("Tools", id="tools"):
+                yield ToolsTab()
             with TabPane("Venv", id="venv"):
                 yield VenvTab()
             with TabPane("About", id="about"):
@@ -185,6 +189,11 @@ class EtuiApp(App):
                 self.query_one("#txt-cmake-build").focus()
             except Exception:
                 pass
+        elif pane_id == "tools":
+            try:
+                self.query_one("#tools-table").focus()
+            except Exception:
+                pass
         elif pane_id == "venv":
             try:
                 self.query_one("#venv-project-path").focus()
@@ -231,6 +240,18 @@ class EtuiApp(App):
                     self.run_worker(
                         cmake_tab.cancel_active_operation(),
                         name="cancel-cmake-operation",
+                        exit_on_error=False,
+                    )
+            except Exception:
+                pass
+
+        if pane_id != "tools":
+            try:
+                tools_tab = self.query_one(ToolsTab)
+                if tools_tab.busy:
+                    self.run_worker(
+                        tools_tab.cancel_active_operation(),
+                        name="cancel-tools-operation",
                         exit_on_error=False,
                     )
             except Exception:

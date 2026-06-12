@@ -1,0 +1,112 @@
+# Copyright (c) 2026 Pawel Wodnicki
+# Copyright (c) 2026 32bitmico LLC
+
+import tempfile
+import asyncio
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, AsyncMock
+
+from etui.tabs.tools import ToolService, ToolsTab, ToolDefinition, ExecutableProbe, ToolResult, ToolState, ExecutableResult
+
+class ToolsTabUnitTests(unittest.IsolatedAsyncioTestCase):
+    def test_package_manager_detection_and_command_building(self) -> None:
+        service = ToolService(tuple())
+        
+        # Define mock tool
+        def_tool = ToolDefinition(
+            tool_id="mock-tool",
+            display_name="Mock Tool",
+            probes=(ExecutableProbe("mock_exe", ("--version",)),),
+            documentation_url="http://mock",
+            package_plans={
+                "apt": {"manager": "apt-get", "packages": ("mock-pkg",), "documentation_url": "http://mock"}
+            }
+        )
+        
+        # Build command plan
+        # We manually inject the package plan as a PackagePlan subclass or dictionary
+        from etui.tabs.tools import PackagePlan
+        def_tool = ToolDefinition(
+            tool_id="mock-tool",
+            display_name="Mock Tool",
+            probes=(ExecutableProbe("mock_exe", ("--version",)),),
+            documentation_url="http://mock",
+            package_plans={
+                "apt": PackagePlan("apt-get", ("mock-pkg",), "http://mock")
+            }
+        )
+        
+        cmd = service.build_install_command(def_tool, "apt-get")
+        self.assertEqual(cmd, ["apt-get", "install", "-y", "--", "mock-pkg"])
+
+    async def test_find_executable_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+            path1 = Path(tmp1)
+            path2 = Path(tmp2)
+            
+            # Create executable stub in path1
+            exe1 = path1 / "my_exe"
+            exe1.touch()
+            exe1.chmod(0o755)
+            
+            # Create executable stub in path2
+            exe2 = path2 / "my_exe"
+            exe2.touch()
+            exe2.chmod(0o755)
+            
+            # Search with path1 taking precedence
+            service = ToolService((path1, path2))
+            res = service.find_executable("my_exe")
+            self.assertEqual(res, exe1.resolve())
+            
+            # Search with path2 taking precedence
+            service = ToolService((path2, path1))
+            res = service.find_executable("my_exe")
+            self.assertEqual(res, exe2.resolve())
+
+    async def test_validate_gnu_arm_target_success(self) -> None:
+        service = ToolService(tuple())
+        service._capture_command = AsyncMock(return_code=0)
+        
+        # Mock create_subprocess_exec call
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"arm-none-eabi\n", b""))
+        
+        with unittest.mock.patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            err = await service.validate_gnu_arm(Path("/usr/bin/gcc"))
+            self.assertIsNone(err)
+
+    async def test_validate_gnu_arm_target_mismatch(self) -> None:
+        service = ToolService(tuple())
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"x86_64-pc-linux-gnu\n", b""))
+        
+        with unittest.mock.patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            err = await service.validate_gnu_arm(Path("/usr/bin/gcc"))
+            self.assertIn("Invalid target machine: x86_64-pc-linux-gnu", err)
+
+    async def test_validate_llvm_arm_success(self) -> None:
+        service = ToolService(tuple())
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        
+        with unittest.mock.patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            err = await service.validate_llvm_arm(Path("/usr/bin/clang"))
+            self.assertIsNone(err)
+
+    async def test_validate_llvm_arm_failure(self) -> None:
+        service = ToolService(tuple())
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        mock_proc.communicate = AsyncMock(return_value=(b"", b"error: unknown target triple 'arm-none-eabi'\n"))
+        
+        with unittest.mock.patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            err = await service.validate_llvm_arm(Path("/usr/bin/clang"))
+            self.assertIn("Target compilation check failed", err)
+
+if __name__ == "__main__":
+    unittest.main()
