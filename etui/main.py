@@ -46,6 +46,15 @@ class CommandMessage(Message):
 class EtuiApp(App):
     """ Embedded TUI App"""
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        if __package__:
+            from .tabs.tools import ToolRegistry
+        else:
+            from tabs.tools import ToolRegistry
+        self.tool_registry = ToolRegistry(self)
+
+
     CSS = """
         TabbedContent {
             height: 1fr;
@@ -146,6 +155,17 @@ class EtuiApp(App):
         # Show main-input only for serial tab, hide for all others
         try:
             self.query_one("#main-input").display = (pane_id == "serial")
+        except Exception:
+            pass
+
+        # Update any tool warning banners in the active pane
+        try:
+            if __package__:
+                from .tabs.tools import ToolWarningBanner
+            else:
+                from tabs.tools import ToolWarningBanner
+            for banner in event.pane.query(ToolWarningBanner):
+                banner.check_status()
         except Exception:
             pass
 

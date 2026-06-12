@@ -79,6 +79,12 @@ class GitHubTab(Vertical):
         self._operation_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
+        if __package__:
+            from .tools import ToolWarningBanner
+        else:
+            from tools import ToolWarningBanner
+        yield ToolWarningBanner("gh", "GitHub CLI", id="gh-tool-warning")
+
         with Horizontal(id="github-navigation-bar"):
             yield Button("Issues", id="btn-mode-issues", variant="primary")
             yield Button("Pull Requests", id="btn-mode-prs")
@@ -347,8 +353,18 @@ class GitHubTab(Vertical):
         timeout: float,
         cwd: Path | None = None,
     ) -> tuple[int, str, str]:
+        cmd_args = list(command)
+        if cmd_args:
+            exe = cmd_args[0]
+            if hasattr(self.app, "tool_registry"):
+                res = self.app.tool_registry.get_result(exe)
+                if res and res.state.value == "Installed":
+                    primary_exe = res.executables[0] if res.executables else None
+                    if primary_exe and primary_exe.path:
+                        cmd_args[0] = primary_exe.path
+
         process = await asyncio.create_subprocess_exec(
-            *command,
+            *cmd_args,
             cwd=str(cwd) if cwd else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

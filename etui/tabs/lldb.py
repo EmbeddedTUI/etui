@@ -271,6 +271,12 @@ class LldbTab(Horizontal):
         self._stop_hook_id: int | None = None
 
     def compose(self) -> ComposeResult:
+        if __package__:
+            from .tools import ToolWarningBanner
+        else:
+            from tools import ToolWarningBanner
+        yield ToolWarningBanner("llvm-embedded", "LLVM Embedded Toolchain", id="llvm-tool-warning")
+
         with Vertical(id="lldb-console"):
             yield LldbLog()
             yield Input(placeholder="lldb command", id="lldb-input")
@@ -371,11 +377,21 @@ class LldbTab(Horizontal):
 
     async def start(self) -> None:
         log = self.query_one(LldbLog)
-        if shutil.which("lldb") is None:
-            log.write("[red]lldb not found on PATH[/red]")
+        
+        lldb_path = "lldb"
+        if hasattr(self.app, "tool_registry"):
+            res = self.app.tool_registry.get_result("llvm-embedded")
+            if res and res.state.value == "Installed":
+                for exe in res.executables:
+                    if exe.name == "lldb" and exe.path:
+                        lldb_path = exe.path
+                        break
+
+        if shutil.which(lldb_path) is None:
+            log.write(f"[red]{lldb_path} not found on PATH[/red]")
             return
         self._proc = await asyncio.create_subprocess_exec(
-            "lldb", "--no-use-colors",
+            lldb_path, "--no-use-colors",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,

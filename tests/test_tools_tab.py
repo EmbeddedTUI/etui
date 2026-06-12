@@ -108,5 +108,50 @@ class ToolsTabUnitTests(unittest.IsolatedAsyncioTestCase):
             err = await service.validate_llvm_arm(Path("/usr/bin/clang"))
             self.assertIn("Target compilation check failed", err)
 
+    def test_tool_registry_and_warning_banner(self) -> None:
+        from etui.tabs.tools import ToolRegistry, ToolWarningBanner, TOOL_BY_ID
+        
+        # Mock application object
+        app = MagicMock()
+        registry = ToolRegistry(app)
+        app.tool_registry = registry
+        
+        # Test default fallback when registry is empty (assuming e.g. "git" is installed on system)
+        import shutil
+        git_missing_on_path = shutil.which("git") is None
+        self.assertEqual(registry.is_missing_or_incomplete("git"), git_missing_on_path)
+        
+        # Inject tool results
+        mock_definition = TOOL_BY_ID["git"]
+        installed_result = ToolResult(
+            definition=mock_definition,
+            state=ToolState.INSTALLED,
+            executables=(ExecutableResult("git", "/usr/bin/git", "git version 2.40", None),)
+        )
+        registry.update_result("git", installed_result)
+        self.assertTrue(registry.is_installed("git"))
+        self.assertFalse(registry.is_missing_or_incomplete("git"))
+        
+        missing_result = ToolResult(
+            definition=mock_definition,
+            state=ToolState.MISSING,
+            executables=(ExecutableResult("git", None, None, "Executable not found"),)
+        )
+        registry.update_result("git", missing_result)
+        self.assertFalse(registry.is_installed("git"))
+        self.assertTrue(registry.is_missing_or_incomplete("git"))
+        
+        # Test ToolWarningBanner behavior
+        with unittest.mock.patch.object(ToolWarningBanner, "app", new_callable=unittest.mock.PropertyMock) as mock_app:
+            mock_app.return_value = app
+            banner = ToolWarningBanner("git", "Git")
+            banner.check_status()
+            self.assertTrue(banner.display)
+            
+            # Switch back to installed
+            registry.update_result("git", installed_result)
+            banner.check_status()
+            self.assertFalse(banner.display)
+
 if __name__ == "__main__":
     unittest.main()

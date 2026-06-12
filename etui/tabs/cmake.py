@@ -79,6 +79,12 @@ class CMakeTab(Vertical):
         self._operation_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
+        if __package__:
+            from .tools import ToolWarningBanner
+        else:
+            from tools import ToolWarningBanner
+        yield ToolWarningBanner("cmake", "CMake", id="cmake-tool-warning")
+
         with Vertical(id="cmake-header-bar"):
             with Horizontal():
                 yield Label("Source Dir: ", classes="control-label")
@@ -118,8 +124,13 @@ class CMakeTab(Vertical):
         build_input = self.query_one("#txt-cmake-build", Input)
         log = self.query_one(RichLog)
         
-        # Check CMake executable presence on PATH using shutil.which
-        cmake_exists = shutil.which("cmake") is not None
+        # Check CMake executable presence
+        cmake_exists = False
+        if hasattr(self.app, "tool_registry"):
+            cmake_exists = self.app.tool_registry.is_installed("cmake")
+        if not cmake_exists:
+            cmake_exists = shutil.which("cmake") is not None
+
         if not cmake_exists:
             log.clear()
             log.write("[red]Error: 'cmake' executable not found on system PATH.[/red]")
@@ -300,8 +311,19 @@ class CMakeTab(Vertical):
         log_widget: RichLog | None = None
     ) -> tuple[int, str, str]:
         """ Unified runner with process group cancellation support """
+        cmd_args = list(command)
+        if cmd_args:
+            exe = cmd_args[0]
+            if exe in ("cmake", "ctest") and hasattr(self.app, "tool_registry"):
+                res = self.app.tool_registry.get_result("cmake")
+                if res and res.state.value == "Installed":
+                    for e in res.executables:
+                        if e.name == exe and e.path:
+                            cmd_args[0] = e.path
+                            break
+
         process = await asyncio.create_subprocess_exec(
-            *command,
+            *cmd_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=(os.name == "posix")

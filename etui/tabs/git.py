@@ -99,6 +99,12 @@ class GitTab(Vertical):
         self._cancel_requested = False
 
     def compose(self) -> ComposeResult:
+        if __package__:
+            from .tools import ToolWarningBanner
+        else:
+            from tools import ToolWarningBanner
+        yield ToolWarningBanner("git", "Git", id="git-tool-warning")
+
         with Horizontal(id="git-repo-select"):
             yield Label("Git Repository: ")
             yield Input(
@@ -285,8 +291,16 @@ class GitTab(Vertical):
         timeout: float = 15.0,
         stdin: bytes | None = None,
     ) -> tuple[int, bytes, bytes]:
+        git_path = "git"
+        if hasattr(self.app, "tool_registry"):
+            res = self.app.tool_registry.get_result("git")
+            if res and res.state.value == "Installed":
+                primary_exe = res.executables[0] if res.executables else None
+                if primary_exe and primary_exe.path:
+                    git_path = primary_exe.path
+
         process = await asyncio.create_subprocess_exec(
-            "git",
+            git_path,
             *args,
             cwd=str(cwd or self.repo_path) if (cwd or self.repo_path) else None,
             env=env,
@@ -316,8 +330,16 @@ class GitTab(Vertical):
         limit: int,
         timeout: float = 15.0,
     ) -> tuple[int, bytes, bytes, bool]:
+        git_path = "git"
+        if hasattr(self.app, "tool_registry"):
+            res = self.app.tool_registry.get_result("git")
+            if res and res.state.value == "Installed":
+                primary_exe = res.executables[0] if res.executables else None
+                if primary_exe and primary_exe.path:
+                    git_path = primary_exe.path
+
         process = await asyncio.create_subprocess_exec(
-            "git",
+            git_path,
             *args,
             cwd=str(self.repo_path) if self.repo_path else None,
             stdout=asyncio.subprocess.PIPE,

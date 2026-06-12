@@ -527,11 +527,16 @@ class ToolsTab(Vertical):
             for definition in TOOL_CATALOG:
                 res = await self.service.scan_tool(definition)
                 self.results[definition.tool_id] = res
+                if hasattr(self.app, "tool_registry"):
+                    self.app.tool_registry.update_result(definition.tool_id, res)
             
             self._render_table()
             # Restore selection details if possible
             if self.selected_tool_id:
                 self._render_tool_details(self.selected_tool_id)
+            if hasattr(self.app, "tool_registry"):
+                for banner in self.app.query(ToolWarningBanner):
+                    banner.check_status()
             log.write("[green]System scan completed successfully.[/green]")
         except asyncio.CancelledError:
             log.write("[yellow]Scan cancelled.[/yellow]")
@@ -552,6 +557,10 @@ class ToolsTab(Vertical):
         try:
             res = await self.service.scan_tool(definition)
             self.results[tool_id] = res
+            if hasattr(self.app, "tool_registry"):
+                self.app.tool_registry.update_result(tool_id, res)
+                for banner in self.app.query(ToolWarningBanner):
+                    banner.check_status()
             self._render_table()
             self._render_tool_details(tool_id)
             log.write(f"[green]Scan of {definition.display_name} completed.[/green]")
@@ -773,6 +782,10 @@ class ToolsTab(Vertical):
             log.write("\n[green]Installation process completed. Verifying...[/green]")
             res = await self.service.scan_tool(definition)
             self.results[definition.tool_id] = res
+            if hasattr(self.app, "tool_registry"):
+                self.app.tool_registry.update_result(definition.tool_id, res)
+                for banner in self.app.query(ToolWarningBanner):
+                    banner.check_status()
             self._render_table()
             self._render_tool_details(definition.tool_id)
         except TimeoutError:
@@ -832,3 +845,100 @@ class ToolsTab(Vertical):
                 self._render_tool_details(definition.tool_id)
                 self._set_controls_enabled(True)
                 break
+
+    def select_tool(self, tool_id: str) -> None:
+        """Programmatically select a tool in the table and display its details."""
+        table = self.query_one("#tools-table", DataTable)
+        for index, row_key in enumerate(table.rows):
+            row_data = table.get_row(row_key)
+            defn = TOOL_BY_ID.get(tool_id)
+            if defn and row_data[0] == defn.display_name:
+                table.move_cursor(row=index)
+                self.selected_tool_id = tool_id
+                self._render_tool_details(tool_id)
+                self._set_controls_enabled(True)
+                break
+
+
+# ==============================================================================
+# Tool Registry & Warning Banner
+# ==============================================================================
+
+class ToolRegistry:
+    def __init__(self, app) -> None:
+        self.app = app
+        self._results: dict[str, ToolResult] = {}
+
+    def update_result(self, tool_id: str, result: ToolResult) -> None:
+        self._results[tool_id] = result
+
+    def get_result(self, tool_id: str) -> ToolResult | None:
+        return self._results.get(tool_id)
+
+    def is_installed(self, tool_id: str) -> bool:
+        res = self._results.get(tool_id)
+        return res is not None and res.state == ToolState.INSTALLED
+
+    def is_missing_or_incomplete(self, tool_id: str) -> bool:
+        res = self._results.get(tool_id)
+        if res is not None:
+            return res.state in (ToolState.MISSING, ToolState.INCOMPLETE, ToolState.INVALID)
+        
+        # Fallback before scan finishes
+        defn = TOOL_BY_ID.get(tool_id)
+        if not defn:
+            return False
+        for probe in defn.probes:
+            if probe.required:
+                if shutil.which(probe.name) is None:
+                    return True
+        return False
+
+
+class ToolWarningBanner(Horizontal):
+    DEFAULT_CSS = """
+    ToolWarningBanner {
+        display: none;
+        height: 3;
+        background: $error-darken-1;
+        color: $text;
+        padding: 0 1;
+        align: left middle;
+        border-bottom: solid $error;
+    }
+    ToolWarningBanner Label {
+        margin-top: 1;
+        margin-right: 2;
+        text-style: bold;
+    }
+    ToolWarningBanner Button {
+        height: 1;
+        min-width: 15;
+    }
+    """
+
+    def __init__(self, tool_id: str, tool_name: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.tool_id = tool_id
+        self.tool_name = tool_name
+
+    def compose(self) -> ComposeResult:
+        yield Label(f"Required tool '{self.tool_name}' is missing or incomplete!")
+        yield Button(f"Configure {self.tool_name}", id="btn-fix-tool", variant="warning")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-fix-tool":
+            from textual.widgets import TabbedContent
+            self.app.query_one(TabbedContent).active = "tools"
+            try:
+                tools_tab = self.app.query_one(ToolsTab)
+                tools_tab.select_tool(self.tool_id)
+            except Exception:
+                pass
+
+    def check_status(self) -> None:
+        if hasattr(self.app, "tool_registry"):
+            if self.app.tool_registry.is_missing_or_incomplete(self.tool_id):
+                self.display = True
+            else:
+                self.display = False

@@ -178,6 +178,13 @@ class DebuggerTab(Horizontal):
         self._lldb_opened = False
 
     def compose(self) -> ComposeResult:
+        if __package__:
+            from .tools import ToolWarningBanner
+        else:
+            from tools import ToolWarningBanner
+        yield ToolWarningBanner("openocd", "OpenOCD", id="openocd-tool-warning")
+        yield ToolWarningBanner("gnu-arm", "GNU Arm Toolchain", id="gnu-arm-tool-warning")
+
         with Vertical():
             with Horizontal(id="debugger-controls"):
                 yield Select(
@@ -414,12 +421,31 @@ class DebuggerTab(Horizontal):
         if self._proc is not None and self._proc.returncode is None:
             log.write("[yellow]debugger already running[/yellow]")
             return
-        if shutil.which(BACKENDS[self._backend][0]) is None:
-            log.write(f"[red]{BACKENDS[self._backend][0]} not found on PATH[/red]")
+
+        backend_exe = BACKENDS[self._backend][0]
+        if self._backend == "openocd" and hasattr(self.app, "tool_registry"):
+            res = self.app.tool_registry.get_result("openocd")
+            if res and res.state.value == "Installed":
+                primary_exe = res.executables[0] if res.executables else None
+                if primary_exe and primary_exe.path:
+                    backend_exe = primary_exe.path
+        elif self._backend == "gdb" and hasattr(self.app, "tool_registry"):
+            res = self.app.tool_registry.get_result("gnu-arm")
+            if res and res.state.value == "Installed":
+                for exe in res.executables:
+                    if exe.name == "arm-none-eabi-gdb" and exe.path:
+                        backend_exe = exe.path
+                        break
+
+        if shutil.which(backend_exe) is None:
+            log.write(f"[red]{backend_exe} not found on PATH[/red]")
             return
         argv = self._build_argv(log)
         if argv is None:
             return
+
+        argv[0] = backend_exe
+
         if self._probe:
             log.write(f"[cyan]using probe {self._probe['uid']}[/cyan]")
         self._proc = await asyncio.create_subprocess_exec(
