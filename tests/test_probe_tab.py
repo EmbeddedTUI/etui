@@ -142,6 +142,68 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(probes[0]["firmware"], "V5.182")
         self.assertTrue(probes[0]["backend_uid"])
 
+    def test_raspberry_pi_debug_probe_usb_identity_is_registered(self) -> None:
+        desc, driver, interface = KNOWN_USB_PROBES[(0x2E8A, 0x000C)]
+
+        self.assertEqual(desc, "Raspberry Pi Debug Probe")
+        self.assertEqual(driver, "pyocd")
+        self.assertEqual(interface, CMSIS_DAP_INTERFACE)
+
+    def test_raspberry_pi_debug_probe_is_classified_as_cmsis_dap(self) -> None:
+        driver, interface = ProbeTab._classify(
+            "Raspberry Pi Debug Probe (CMSIS-DAP) V2.0.1"
+        )
+
+        self.assertEqual(driver, "pyocd")
+        self.assertEqual(interface, CMSIS_DAP_INTERFACE)
+        self.assertEqual(
+            ProbeTab._transport(
+                "Raspberry Pi Debug Probe (CMSIS-DAP) V2.0.1",
+                interface,
+            ),
+            "cmsis-dap",
+        )
+        self.assertEqual(
+            ProbeTab._firmware_version(
+                "Raspberry Pi Debug Probe (CMSIS-DAP) V2.0.1"
+            ),
+            "V2.0.1",
+        )
+
+    def test_raspberry_pi_debug_probe_usb_fallback_preserves_identity_metadata(self) -> None:
+        device = SimpleNamespace(
+            idVendor=0x2E8A,
+            idProduct=0x000C,
+            iSerialNumber=1,
+            iProduct=2,
+            bus=5,
+            address=17,
+        )
+
+        def get_string(_device: object, index: int) -> str:
+            if index == 1:
+                return "RPI-DEBUG-PROBE-1"
+            return "Raspberry Pi Debug Probe (CMSIS-DAP) V2.0.1"
+
+        with (
+            patch(
+                "pyocd.probe.aggregator.DebugProbeAggregator"
+                ".get_all_connected_probes",
+                return_value=[],
+            ),
+            patch("usb.core.find", return_value=[device]),
+            patch("usb.util.get_string", side_effect=get_string),
+        ):
+            probes = ProbeTab._list_probes()
+
+        self.assertEqual(len(probes), 1)
+        self.assertEqual(probes[0]["uid"], "RPI-DEBUG-PROBE-1")
+        self.assertEqual(probes[0]["vid"], 0x2E8A)
+        self.assertEqual(probes[0]["pid"], 0x000C)
+        self.assertEqual(probes[0]["transport"], "cmsis-dap")
+        self.assertEqual(probes[0]["firmware"], "V2.0.1")
+        self.assertTrue(probes[0]["backend_uid"])
+
     def test_pyocd_gdbserver_requires_explicit_target(self) -> None:
         tab = ProbeTab()
         tab._probe = {

@@ -90,6 +90,11 @@ KNOWN_USB_PROBES = {
         "pyocd",
         CMSIS_DAP_INTERFACE,
     ),
+    (0x2E8A, 0x000C): (
+        "Raspberry Pi Debug Probe",
+        "pyocd",
+        CMSIS_DAP_INTERFACE,
+    ),
 }
 
 

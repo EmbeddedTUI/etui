@@ -206,6 +206,14 @@ def test_lpc_link2_cmsis_dap_usb_probe_registered() -> None:
     assert interface == CMSIS_DAP_INTERFACE
 
 
+def test_raspberry_pi_debug_probe_registered() -> None:
+    from etui.tabs.probe import CMSIS_DAP_INTERFACE, KNOWN_USB_PROBES
+    desc, driver, interface = KNOWN_USB_PROBES[(0x2E8A, 0x000C)]
+    assert desc == "Raspberry Pi Debug Probe"
+    assert driver == "pyocd"
+    assert interface == CMSIS_DAP_INTERFACE
+
+
 # ---------------------------------------------------------------------------
 # Tests — tab registry
 # ---------------------------------------------------------------------------
