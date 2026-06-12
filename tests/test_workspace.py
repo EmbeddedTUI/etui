@@ -24,12 +24,20 @@ class WorkspaceRootTests(unittest.IsolatedAsyncioTestCase):
         (self.workspace_root / ".git").mkdir()
         # Create a pyproject.toml
         (self.workspace_root / "pyproject.toml").write_text("[project]\nname = \"test\"\n")
+        self.settings_path = self.tmp_dir / "settings.yaml"
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp_dir)
 
-    async def test_set_workspace_root_propagates_to_tabs(self) -> None:
+    def _make_app(self) -> "EtuiApp":
+        from etui.settings import SettingsManager
         app = EtuiApp()
+        app.settings_manager = SettingsManager(path=self.settings_path)
+        app.workspace_root = app.load_workspace_root()
+        return app
+
+    async def test_set_workspace_root_propagates_to_tabs(self) -> None:
+        app = self._make_app()
         async with app.run_test() as pilot:
             # Set workspace root
             await app.set_workspace_root(str(self.workspace_root))
@@ -52,7 +60,7 @@ class WorkspaceRootTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(git_tab.query_one("#txt-repo-path", Input).value, str(self.workspace_root))
 
     async def test_empty_input_falls_back_to_tree_path(self) -> None:
-        app = EtuiApp()
+        app = self._make_app()
         async with app.run_test() as pilot:
             files_tab = app.query_one(FilesTab)
             # Empty out the input field

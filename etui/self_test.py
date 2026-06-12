@@ -22,7 +22,7 @@ from typing import Callable, Iterator
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class TestResult:
+class SelfTestResult:
     name: str
     passed: bool
     message: str
@@ -37,16 +37,16 @@ def _collect() -> list[Callable[[], None]]:
     ]
 
 
-def run_all() -> list[TestResult]:
+def run_all() -> list[SelfTestResult]:
     """Run every test and return results. Never raises."""
-    results: list[TestResult] = []
+    results: list[SelfTestResult] = []
     for fn in _collect():
         name = fn.__name__.removeprefix("test_").replace("_", " ")
         try:
             fn()
-            results.append(TestResult(name, True, "ok"))
+            results.append(SelfTestResult(name, True, "ok"))
         except Exception as exc:
-            results.append(TestResult(name, False, str(exc)))
+            results.append(SelfTestResult(name, False, str(exc)))
     return results
 
 
