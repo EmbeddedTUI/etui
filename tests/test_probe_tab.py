@@ -208,7 +208,7 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(tab._build_argv(log))
         self.assertIn("no usable serial", log.write.call_args.args[0])
 
-    def test_parse_pyocd_lpc_target_table(self) -> None:
+    def test_parse_pyocd_target_table(self) -> None:
         targets = ProbeTab._parse_pyocd_targets(
             "\n".join(
                 [
@@ -218,7 +218,8 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
                     "lpc55s69 NXP duplicate builtin",
                     "stm32f4 STMicro STM32F4 builtin",
                 ]
-            )
+            ),
+            "lpc"
         )
 
         self.assertEqual(
@@ -229,7 +230,7 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_lpc_target_button_populates_dropdown(self) -> None:
+    async def test_target_button_populates_dropdown(self) -> None:
         app = ProbeTestApp()
         async with app.run_test() as pilot:
             tab = app.query_one(ProbeTab)
@@ -249,7 +250,7 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
                     new=AsyncMock(return_value=process),
                 ) as create_process,
             ):
-                await tab.list_lpc_targets()
+                await tab.list_targets("lpc")
 
             create_process.assert_awaited_once_with(
                 "/bin/pyocd",
@@ -267,7 +268,7 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(target_select.disabled)
             self.assertIn("lpc1768", tab._custom_targets)
             self.assertIn("lpc55s69", tab._custom_targets)
-            self.assertFalse(tab.query_one("#dbg-list-lpc", Button).disabled)
+            self.assertFalse(tab.query_one("#dbg-list-targets", Button).disabled)
 
             target_select.value = "lpc55s69"
             await pilot.pause()

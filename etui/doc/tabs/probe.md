@@ -36,9 +36,7 @@ targets can be entered under **Settings -> Probe / Debugger** using an ID from
 ## Usage
 
 1. Plug in a debug probe. The probe dropdown auto-populates with detected USB probes.
-2. Select the **Backend** and target. For an LPC target, click **LPC** to run
-   `pyocd list --targets -H -n lpc`, then choose the target from the dropdown.
-   CMSIS-DAP probes cannot identify the attached MCU automatically.
+2. Select the **Backend** and target. Click **List targets** to query supported target IDs (e.g. `lpc`, `stm32`, `nrf52`) from pyOCD, then choose the target from the dropdown. CMSIS-DAP probes cannot identify the attached MCU automatically.
 3. Adjust the adapter speed if needed (default: 4000 kHz).
 4. Click **Start GDB Server**. The server port, telnet port, and TCL port are shown.
 5. etui automatically opens the LLDB tab and connects once the server is ready.

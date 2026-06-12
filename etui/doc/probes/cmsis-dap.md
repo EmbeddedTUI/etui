@@ -9,8 +9,7 @@ target ID before starting a debug session.
 1. Connect the probe to USB and connect SWDIO, SWCLK, GND, and target voltage.
 2. Open **Probe** and click **Detect**.
 3. Select the detected CMSIS-DAP probe.
-4. For an LPC target, click **LPC** and select the target ID loaded from pyOCD.
-   Other target IDs can be entered under **Settings -> Probe / Debugger**.
+4. Click **List targets**, enter a search filter (e.g. `lpc` or `stm32`), and select the target ID loaded from pyOCD. Other target IDs can also be entered under **Settings -> Probe / Debugger**.
 5. Leave the backend set to **pyocd** and click **Start**.
 
 etui starts `pyocd gdbserver` with the selected probe UID, target, adapter

@@ -184,6 +184,55 @@ class SettingsScreen(ModalScreen[dict | None]):
         self.dismiss(result)
 
 
+class TargetFilterScreen(ModalScreen[str | None]):
+    """ Modal dialog to prompt for a target family/name filter. """
+
+    CSS = """
+        TargetFilterScreen {
+            align: center middle;
+        }
+        #filter-box {
+            width: 40;
+            height: auto;
+            border: thick $accent;
+            background: $surface;
+            padding: 1 2;
+        }
+        #filter-box Input {
+            margin-bottom: 1;
+        }
+        #filter-buttons {
+            height: auto;
+            align-horizontal: right;
+        }
+        #filter-buttons Button {
+            margin-left: 2;
+        }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="filter-box"):
+            yield Label("Filter pyOCD targets:")
+            yield Input(placeholder="e.g. stm32, lpc, nrf", id="filter-input")
+            with Horizontal(id="filter-buttons"):
+                yield Button("Query", id="filter-query", variant="success")
+                yield Button("Cancel", id="filter-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#filter-input", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "filter-cancel":
+            self.dismiss(None)
+        elif event.button.id == "filter-query":
+            val = self.query_one("#filter-input", Input).value.strip()
+            self.dismiss(val if val else None)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        val = event.value.strip()
+        self.dismiss(val if val else None)
+
+
 class LldbStart(Message):
     """ Posted when the hardware debugger's gdb server is ready for lldb. """
 
@@ -318,7 +367,7 @@ class ProbeTab(Vertical):
                 yield Input(placeholder="debugger command", id="dbg-input")
             with Vertical(id="probe-actions"):
                 yield Button("Detect", id="dbg-detect", variant="primary")
-                yield Button("List LPC targets", id="dbg-list-lpc")
+                yield Button("List targets", id="dbg-list-targets")
                 yield Button("Settings", id="dbg-settings")
                 yield Button("Start", id="dbg-start", variant="success")
                 yield Button("Stop", id="dbg-stop", variant="error")
@@ -347,8 +396,8 @@ class ProbeTab(Vertical):
             self.open_settings()
         elif event.button.id == "dbg-detect":
             await self.detect_probes()
-        elif event.button.id == "dbg-list-lpc":
-            await self.list_lpc_targets()
+        elif event.button.id == "dbg-list-targets":
+            self.query_targets()
         elif event.button.id == "dbg-start":
             await self.start()
         elif event.button.id == "dbg-stop":
@@ -460,7 +509,7 @@ class ProbeTab(Vertical):
             )
 
     @staticmethod
-    def _parse_pyocd_targets(output: str) -> list[tuple[str, str]]:
+    def _parse_pyocd_targets(output: str, filter_str: str | None = None) -> list[tuple[str, str]]:
         targets: list[tuple[str, str]] = []
         seen: set[str] = set()
         for raw_line in output.splitlines():
@@ -470,9 +519,11 @@ class ProbeTab(Vertical):
             target_id = columns[0]
             if (
                 target_id in seen
-                or "lpc" not in target_id.lower()
+                or target_id.lower() == "name"
                 or not ProbeTab._valid_pyocd_target(target_id)
             ):
+                continue
+            if filter_str and filter_str.lower() not in target_id.lower():
                 continue
             vendor = columns[1]
             display_name = " ".join(columns[2:-1]) if len(columns) > 3 else ""
@@ -483,16 +534,24 @@ class ProbeTab(Vertical):
             seen.add(target_id)
         return targets
 
-    async def list_lpc_targets(self) -> None:
+    def query_targets(self) -> None:
+        def _on_close(result: str | None) -> None:
+            if not result:
+                return
+            self.run_worker(self.list_targets(result), exclusive=True)
+
+        self.app.push_screen(TargetFilterScreen(), _on_close)
+
+    async def list_targets(self, filter_str: str) -> None:
         log = self.query_one(ProbeLog)
-        button = self.query_one("#dbg-list-lpc", Button)
+        button = self.query_one("#dbg-list-targets", Button)
         pyocd_exe = shutil.which("pyocd")
         if pyocd_exe is None:
             log.write("[red]pyocd not found on PATH[/red]")
             return
 
         button.disabled = True
-        log.write("[cyan]loading LPC targets from pyocd...[/cyan]")
+        log.write(f"[cyan]loading targets matching '{escape(filter_str)}' from pyocd...[/cyan]")
         try:
             process = await asyncio.create_subprocess_exec(
                 pyocd_exe,
@@ -500,7 +559,7 @@ class ProbeTab(Vertical):
                 "--targets",
                 "-H",
                 "-n",
-                "lpc",
+                filter_str,
                 "--color",
                 "never",
                 stdout=asyncio.subprocess.PIPE,
@@ -535,9 +594,9 @@ class ProbeTab(Vertical):
                 log.write(escape(text.strip()))
             return
 
-        targets = self._parse_pyocd_targets(text)
+        targets = self._parse_pyocd_targets(text, filter_str)
         if not targets:
-            log.write("[yellow]pyocd reported no LPC targets[/yellow]")
+            log.write(f"[yellow]pyocd reported no targets matching '{escape(filter_str)}'[/yellow]")
             return
 
         self._custom_targets.update(target_id for _, target_id in targets)
@@ -550,7 +609,7 @@ class ProbeTab(Vertical):
         else:
             target_select.value = TARGET_NONE
         log.write(
-            f"[green]loaded {len(targets)} LPC targets; "
+            f"[green]loaded {len(targets)} targets matching '{escape(filter_str)}'; "
             "select one from the target dropdown[/green]"
         )
 
