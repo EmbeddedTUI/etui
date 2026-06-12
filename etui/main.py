@@ -70,8 +70,12 @@ class EtuiApp(App):
         }
 
         /* Push the Theme and About tabs to the far right of the tab bar. */
-        #--content-tab-theme, #--content-tab-about {
+        #--content-tab-about {
             dock: right;
+        }
+        #--content-tab-theme {
+            dock: right;
+            margin-right: 7;
         }
 
         .control-bar {

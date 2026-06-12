@@ -749,19 +749,25 @@ class ToolsTab(Vertical):
             await process.wait()
 
     def _set_controls_enabled(self, enabled: bool) -> None:
-        self.query_one("#btn-tools-scan", Button).disabled = not enabled or self.busy
-        self.query_one("#btn-tools-cancel", Button).disabled = not self.busy
-        self.query_one("#btn-tools-add-dir", Button).disabled = not enabled or self.busy
-        self.query_one("#txt-tools-custom-dir", Input).disabled = not enabled or self.busy
-        
-        if self.selected_tool_id:
-            res = self.results.get(self.selected_tool_id)
-            if res:
-                self.query_one("#btn-tools-rescan", Button).disabled = not enabled or self.busy
-                available_managers = self.service.detect_package_managers()
-                manager_key = next((m for m in available_managers if MANAGER_TO_KEY.get(m) in res.definition.package_plans), None)
-                if res.state != ToolState.INSTALLED and manager_key:
-                    self.query_one("#btn-tools-install", Button).disabled = not enabled or self.busy
+        if not self.is_mounted:
+            return
+        from textual.css.query import NoMatches
+        try:
+            self.query_one("#btn-tools-scan", Button).disabled = not enabled or self.busy
+            self.query_one("#btn-tools-cancel", Button).disabled = not self.busy
+            self.query_one("#btn-tools-add-dir", Button).disabled = not enabled or self.busy
+            self.query_one("#txt-tools-custom-dir", Input).disabled = not enabled or self.busy
+            
+            if self.selected_tool_id:
+                res = self.results.get(self.selected_tool_id)
+                if res:
+                    self.query_one("#btn-tools-rescan", Button).disabled = not enabled or self.busy
+                    available_managers = self.service.detect_package_managers()
+                    manager_key = next((m for m in available_managers if MANAGER_TO_KEY.get(m) in res.definition.package_plans), None)
+                    if res.state != ToolState.INSTALLED and manager_key:
+                        self.query_one("#btn-tools-install", Button).disabled = not enabled or self.busy
+        except NoMatches:
+            pass
 
     async def _install_and_rescan(self, definition: ToolDefinition, command: list[str]) -> None:
         self.busy = True
