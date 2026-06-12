@@ -430,12 +430,18 @@ class CMakeTab(Vertical):
             await process.wait()
 
     def _set_controls_enabled(self, enabled: bool) -> None:
-        self.query_one("#btn-cmake-configure", Button).disabled = not enabled or self.busy
-        self.query_one("#btn-cmake-build", Button).disabled = not enabled or self.busy
-        self.query_one("#btn-cmake-clean", Button).disabled = not enabled or self.busy
-        self.query_one("#btn-cmake-cancel", Button).disabled = not self.busy
-        self.query_one("#txt-cmake-build", Input).disabled = not enabled or self.busy
-        self.query_one("#txt-cmake-type", Input).disabled = not enabled or self.busy
+        if not self.is_mounted:
+            return
+        from textual.css.query import NoMatches
+        try:
+            self.query_one("#btn-cmake-configure", Button).disabled = not enabled or self.busy
+            self.query_one("#btn-cmake-build", Button).disabled = not enabled or self.busy
+            self.query_one("#btn-cmake-clean", Button).disabled = not enabled or self.busy
+            self.query_one("#btn-cmake-cancel", Button).disabled = not self.busy
+            self.query_one("#txt-cmake-build", Input).disabled = not enabled or self.busy
+            self.query_one("#txt-cmake-type", Input).disabled = not enabled or self.busy
+        except NoMatches:
+            pass
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id

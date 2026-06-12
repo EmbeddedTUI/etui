@@ -90,11 +90,16 @@ class FilesTab(Vertical):
             self.query_one("LeftWidget").path = Path(self.app.workspace_root)
             self.query_one("#txt-workspace-root", Input).value = self.app.workspace_root
 
+    def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        event.stop()
+        self.query_one("#txt-workspace-root", Input).value = str(event.path)
+
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         """Called when the user selects a file in the directory tree."""
         event.stop()
         self.current_path = event.path
         self.render_file()
+        self.query_one("#txt-workspace-root", Input).value = str(event.path.parent)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-content":
@@ -114,7 +119,12 @@ class FilesTab(Vertical):
         path_input = self.query_one("#txt-workspace-root", Input)
         path_str = path_input.value.strip()
         if not path_str:
-            return
+            try:
+                tree = self.query_one("LeftWidget")
+                path_str = str(tree.path)
+                path_input.value = path_str
+            except Exception:
+                return
         
         path = Path(path_str).expanduser().resolve()
         if not path.is_dir():

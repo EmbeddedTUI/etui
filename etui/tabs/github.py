@@ -423,18 +423,24 @@ class GitHubTab(Vertical):
             await process.wait()
 
     def _set_controls_enabled(self, enabled: bool) -> None:
-        for selector in (
-            "#btn-mode-issues", "#btn-mode-prs", "#btn-mode-runs",
-            "#btn-github-refresh", "#github-title", "#github-body",
-        ):
-            self.query_one(selector).disabled = not enabled
-        create = self.query_one("#btn-github-create", Button)
-        create.disabled = not enabled or self.active_mode == "workflows"
-        create.label = (
-            "Create Pull Request" if self.active_mode == "prs"
-            else "Create Issue"
-        )
-        self.query_one("#btn-github-cancel", Button).disabled = not self.busy
+        if not self.is_mounted:
+            return
+        from textual.css.query import NoMatches
+        try:
+            for selector in (
+                "#btn-mode-issues", "#btn-mode-prs", "#btn-mode-runs",
+                "#btn-github-refresh", "#github-title", "#github-body",
+            ):
+                self.query_one(selector).disabled = not enabled
+            create = self.query_one("#btn-github-create", Button)
+            create.disabled = not enabled or self.active_mode == "workflows"
+            create.label = (
+                "Create Pull Request" if self.active_mode == "prs"
+                else "Create Issue"
+            )
+            self.query_one("#btn-github-cancel", Button).disabled = not self.busy
+        except NoMatches:
+            pass
 
     def _write_external_error(self, prefix: str, detail: str) -> None:
         self.query_one(RichLog).write(

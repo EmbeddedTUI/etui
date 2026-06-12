@@ -650,18 +650,24 @@ class GitTab(Vertical):
         await self._load_repo_status()
 
     def _set_controls_enabled(self, enabled: bool) -> None:
-        self.query_one("#btn-open-repo", Button).disabled = self.busy
-        self.query_one("#txt-repo-path", Input).disabled = self.busy
-        self.query_one("#git-changes-tree", Tree).disabled = self.busy
-        self.query_one("#btn-git-add-all", Button).disabled = not enabled
-        self.query_one("#btn-git-pull", Button).disabled = not enabled
-        self.query_one("#btn-git-push", Button).disabled = not enabled
-        self.query_one("#txt-commit-msg", Input).disabled = not enabled
-        self.query_one("#btn-git-commit", Button).disabled = not enabled
-        self.query_one("#btn-git-toggle-stage", Button).disabled = (
-            not enabled or self._selected_change is None
-        )
-        self.query_one("#btn-git-cancel", Button).disabled = not self.busy
+        if not self.is_mounted:
+            return
+        from textual.css.query import NoMatches
+        try:
+            self.query_one("#btn-open-repo", Button).disabled = self.busy
+            self.query_one("#txt-repo-path", Input).disabled = self.busy
+            self.query_one("#git-changes-tree", Tree).disabled = self.busy
+            self.query_one("#btn-git-add-all", Button).disabled = not enabled
+            self.query_one("#btn-git-pull", Button).disabled = not enabled
+            self.query_one("#btn-git-push", Button).disabled = not enabled
+            self.query_one("#txt-commit-msg", Input).disabled = not enabled
+            self.query_one("#btn-git-commit", Button).disabled = not enabled
+            self.query_one("#btn-git-toggle-stage", Button).disabled = (
+                not enabled or self._selected_change is None
+            )
+            self.query_one("#btn-git-cancel", Button).disabled = not self.busy
+        except NoMatches:
+            pass
 
     def _write_log(self, message: str, *, style: str | None = None) -> None:
         self.query_one("#git-diff-viewer", RichLog).write(

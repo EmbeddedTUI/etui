@@ -51,5 +51,20 @@ class WorkspaceRootTests(unittest.IsolatedAsyncioTestCase):
             git_tab = app.query_one(GitTab)
             self.assertEqual(git_tab.query_one("#txt-repo-path", Input).value, str(self.workspace_root))
 
+    async def test_empty_input_falls_back_to_tree_path(self) -> None:
+        app = EtuiApp()
+        async with app.run_test() as pilot:
+            files_tab = app.query_one(FilesTab)
+            # Empty out the input field
+            files_tab.query_one("#txt-workspace-root", Input).value = ""
+            
+            # Click "Set Root" button
+            await pilot.click("#btn-set-workspace-root")
+            
+            # Since input was empty, it should have fallen back to the LeftWidget (DirectoryTree)'s path (which defaults to "./" resolved)
+            expected_path = str(Path("./").resolve())
+            self.assertEqual(files_tab.query_one("#txt-workspace-root", Input).value, expected_path)
+            self.assertEqual(str(app.workspace_root), expected_path)
+
 if __name__ == "__main__":
     unittest.main()
