@@ -7,7 +7,7 @@ name = "etui"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.13,<3.15"
 dependencies = [
     "textual>=8.1.1",
     "pyocd>=0.44.1",
@@ -21,5 +21,5 @@ etui = "etui.main:main"
 [dependency-groups]
 dev = [
     "textual-dev>=1.8.0",
-    "pyinstaller>=4.5.1",
+    "pyinstaller>=6.10",
 ]
