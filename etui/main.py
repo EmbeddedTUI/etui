@@ -21,6 +21,7 @@ if __package__:
     from .tabs.serial import SerialTab
     from .tabs.venv import VenvTab
     from .tabs.git import GitTab, RepositoryChanged
+    from .tabs.github import GitHubTab
 else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
@@ -31,6 +32,7 @@ else:
     from tabs.serial import SerialTab
     from tabs.venv import VenvTab
     from tabs.git import GitTab, RepositoryChanged
+    from tabs.github import GitHubTab
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -100,6 +102,8 @@ class EtuiApp(App):
                 yield ThemeTab()
             with TabPane("Git", id="git"):
                 yield GitTab()
+            with TabPane("GitHub", id="github"):
+                yield GitHubTab()
             with TabPane("Venv", id="venv"):
                 yield VenvTab()
             with TabPane("About", id="about"):
@@ -167,6 +171,11 @@ class EtuiApp(App):
                 self.query_one("#txt-repo-path").focus()
             except Exception:
                 pass
+        elif pane_id == "github":
+            try:
+                self.query_one("#btn-mode-issues").focus()
+            except Exception:
+                pass
         elif pane_id == "venv":
             try:
                 self.query_one("#venv-project-path").focus()
@@ -189,6 +198,18 @@ class EtuiApp(App):
                     self.run_worker(
                         git_tab.cancel_active_operation(),
                         name="cancel-git-operation",
+                        exit_on_error=False,
+                    )
+            except Exception:
+                pass
+
+        if pane_id != "github":
+            try:
+                github_tab = self.query_one(GitHubTab)
+                if github_tab.busy:
+                    self.run_worker(
+                        github_tab.cancel_active_operation(),
+                        name="cancel-github-operation",
                         exit_on_error=False,
                     )
             except Exception:
@@ -219,6 +240,13 @@ class EtuiApp(App):
             venv_tab.query_one("#venv-project-path", Input).value = message.path
             if (Path(message.path) / "pyproject.toml").is_file():
                 self.run_worker(venv_tab._select_project())
+        except Exception:
+            pass
+
+        # Update GitHubTab repo
+        try:
+            github_tab = self.query_one(GitHubTab)
+            self.run_worker(github_tab.change_repository(Path(message.path)))
         except Exception:
             pass
 
