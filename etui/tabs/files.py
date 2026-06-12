@@ -26,17 +26,32 @@ class SafeMarkdownViewer(MarkdownViewer):
     targets (SVG images, external URLs, etc.).
     """
 
-    async def go(self, location: str | Path) -> None:
-        path = Path(str(location))
-        if not path.is_absolute():
-            current = self.navigator.location
-            if current is not None:
-                path = (current.parent / path).resolve()
-            else:
-                path = path.resolve()
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._current_document: Path | None = None
 
-        if path.suffix.lower() in _MD_SUFFIXES and path.is_file():
-            await super().go(path)
+    async def go(self, location: str | Path) -> None:
+        path, anchor = Markdown.sanitize_location(str(location))
+        if path == Path(".") and anchor:
+            await super().go(f"#{anchor}")
+            return
+
+        if not path.is_absolute():
+            base = (
+                self._current_document.parent
+                if self._current_document is not None
+                else Path.cwd()
+            )
+            path = (base / path).resolve()
+        else:
+            path = path.resolve()
+
+        if path.suffix.lower() not in _MD_SUFFIXES or not path.is_file():
+            return
+
+        self._current_document = path
+        target = f"{path}#{anchor}" if anchor else path
+        await super().go(target)
 
 
 class LeftWidget(DirectoryTree):

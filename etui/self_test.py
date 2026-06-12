@@ -227,6 +227,16 @@ def test_safe_markdown_viewer_resolves_relative_links() -> None:
     assert resolved == Path("/some/doc/tabs/files.md")
 
 
+def test_safe_markdown_viewer_uses_loaded_document_as_link_base() -> None:
+    from etui.tabs.files import SafeMarkdownViewer
+
+    viewer = SafeMarkdownViewer(show_table_of_contents=False)
+    viewer._current_document = Path("/some/doc/tabs/probe.md")
+    href = "../probes/stlink.md"
+    resolved = (viewer._current_document.parent / href).resolve()
+    assert resolved == Path("/some/doc/probes/stlink.md")
+
+
 def test_safe_markdown_viewer_blocks_non_md_links() -> None:
     from etui.tabs.files import _MD_SUFFIXES
     non_md = ["../screenshots/foo.svg", "http://example.com", "image.png", "data.json"]
