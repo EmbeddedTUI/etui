@@ -15,9 +15,9 @@ does not select a target or change probe firmware based on that version.
 1. Connect LPC-LINK2 to the host and target.
 2. Open **Probe** and click **Detect**.
 3. Select **NXP LPC-LINK2 CMSIS-DAP**.
-4. Open **Settings -> Probe / Debugger**.
-5. Enter the pyOCD target ID for the attached MCU.
-6. Return to **Probe**, leave **pyocd** selected, and click **Start**.
+4. Click **LPC** to query the LPC target IDs supported by the installed pyOCD.
+5. Select the attached MCU from the target dropdown.
+6. Leave **pyocd** selected and click **Start**.
 
 When multiple LPC-LINK2 probes are attached, select the entry containing the
 required serial or pyOCD UID.

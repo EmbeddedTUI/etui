@@ -1,12 +1,14 @@
 # Copyright (c) 2026 Pawel Wodnicki
 # Copyright (c) 2026 32bitmico LLC
 
+import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from textual.app import App, ComposeResult
-from textual.widgets import Select
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, Select
 
 from etui.tabs.probe import (
     CMSIS_DAP_INTERFACE,
@@ -39,7 +41,44 @@ class FakeProcess:
         return 0
 
 
+class FakeTargetListProcess:
+    def __init__(self, output: str, returncode: int = 0) -> None:
+        self._output = output.encode()
+        self.returncode = returncode
+
+    async def communicate(self) -> tuple[bytes, None]:
+        return self._output, None
+
+
 class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
+    async def test_selectors_and_actions_use_separate_columns(self) -> None:
+        app = ProbeTestApp()
+        async with app.run_test(size=(200, 50)) as pilot:
+            await pilot.pause()
+            tab = app.query_one(ProbeTab)
+            layout = tab.query_one("#probe-layout", Horizontal)
+            content = tab.query_one("#probe-content", Vertical)
+            actions = tab.query_one("#probe-actions", Vertical)
+
+            self.assertIs(content.parent, layout)
+            self.assertIs(actions.parent, layout)
+            for selector in ("#dbg-backend", "#dbg-probe", "#dbg-target"):
+                self.assertEqual(
+                    tab.query_one(selector, Select).parent.id,
+                    "probe-selectors",
+                )
+            for button in tab.query("#probe-actions Button"):
+                self.assertIs(button.parent, actions)
+            self.assertEqual(actions.region.width, 20)
+            self.assertGreater(
+                tab.query_one("#dbg-probe", Select).region.width,
+                60,
+            )
+            self.assertGreater(
+                tab.query_one("#dbg-target", Select).region.width,
+                60,
+            )
+
     def test_lpc_link2_usb_identity_is_registered(self) -> None:
         desc, driver, interface = KNOWN_USB_PROBES[(0x1FC9, 0x0090)]
 
@@ -168,6 +207,71 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(tab._build_argv(log))
         self.assertIn("no usable serial", log.write.call_args.args[0])
+
+    def test_parse_pyocd_lpc_target_table(self) -> None:
+        targets = ProbeTab._parse_pyocd_targets(
+            "\n".join(
+                [
+                    "INFO:pyocd:loading targets",
+                    "lpc1768 NXP LPC1768 builtin",
+                    "lpc55s69 NXP LPC55S69 builtin",
+                    "lpc55s69 NXP duplicate builtin",
+                    "stm32f4 STMicro STM32F4 builtin",
+                ]
+            )
+        )
+
+        self.assertEqual(
+            targets,
+            [
+                ("lpc1768 - NXP LPC1768", "lpc1768"),
+                ("lpc55s69 - NXP LPC55S69", "lpc55s69"),
+            ],
+        )
+
+    async def test_lpc_target_button_populates_dropdown(self) -> None:
+        app = ProbeTestApp()
+        async with app.run_test() as pilot:
+            tab = app.query_one(ProbeTab)
+            process = FakeTargetListProcess(
+                "\n".join(
+                    [
+                        "lpc1768 NXP LPC1768 builtin",
+                        "lpc55s69 NXP LPC55S69 builtin",
+                    ]
+                )
+            )
+
+            with (
+                patch("etui.tabs.probe.shutil.which", return_value="/bin/pyocd"),
+                patch(
+                    "etui.tabs.probe.asyncio.create_subprocess_exec",
+                    new=AsyncMock(return_value=process),
+                ) as create_process,
+            ):
+                await tab.list_lpc_targets()
+
+            create_process.assert_awaited_once_with(
+                "/bin/pyocd",
+                "list",
+                "--targets",
+                "-H",
+                "-n",
+                "lpc",
+                "--color",
+                "never",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            target_select = tab.query_one("#dbg-target", Select)
+            self.assertFalse(target_select.disabled)
+            self.assertIn("lpc1768", tab._custom_targets)
+            self.assertIn("lpc55s69", tab._custom_targets)
+            self.assertFalse(tab.query_one("#dbg-list-lpc", Button).disabled)
+
+            target_select.value = "lpc55s69"
+            await pilot.pause()
+            self.assertEqual(tab._pyocd_target, "lpc55s69")
 
     def test_openocd_fallback_uses_generic_cmsis_dap_interface(self) -> None:
         tab = ProbeTab()

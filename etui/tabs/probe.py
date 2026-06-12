@@ -199,8 +199,66 @@ class ProbeLog(RichLog):
         self.write("Probe ready")
 
 
-class ProbeTab(Horizontal):
+class ProbeTab(Vertical):
     """ Probe tab - drives pyocd, openocd or gdb """
+
+    DEFAULT_CSS = """
+        ProbeTab {
+            width: 1fr;
+            height: 1fr;
+        }
+
+        ProbeTab #probe-layout {
+            width: 1fr;
+            height: 1fr;
+        }
+
+        ProbeTab #probe-content {
+            width: 1fr;
+            height: 1fr;
+        }
+
+        ProbeTab #probe-selectors {
+            width: 1fr;
+            height: 5;
+        }
+
+        ProbeTab #dbg-backend {
+            width: 18;
+        }
+
+        ProbeTab #dbg-probe {
+            width: 2fr;
+            min-width: 30;
+        }
+
+        ProbeTab #dbg-target {
+            width: 2fr;
+            min-width: 26;
+        }
+
+        ProbeTab #probe-actions {
+            width: 20;
+            min-width: 20;
+            height: 1fr;
+            padding: 0 1;
+        }
+
+        ProbeTab #probe-actions Button {
+            width: 1fr;
+            min-width: 16;
+            margin-bottom: 1;
+        }
+
+        ProbeTab ProbeLog {
+            width: 1fr;
+            height: 1fr;
+        }
+
+        ProbeTab #dbg-input {
+            width: 1fr;
+        }
+    """
 
     def __init__(self):
         super().__init__()
@@ -233,37 +291,48 @@ class ProbeTab(Horizontal):
             from tools import ToolWarningBanner
         yield ToolWarningBanner("openocd", "OpenOCD", id="openocd-tool-warning")
 
-        with Vertical():
-            with Horizontal(id="probe-controls"):
-                yield Select(
-                    [(name, name) for name in BACKENDS],
-                    value="pyocd",
-                    allow_blank=False,
-                    id="dbg-backend",
-                )
+        with Horizontal(id="probe-layout"):
+            with Vertical(id="probe-content"):
+                with Horizontal(id="probe-selectors"):
+                    yield Select(
+                        [(name, name) for name in BACKENDS],
+                        value="pyocd",
+                        allow_blank=False,
+                        id="dbg-backend",
+                    )
+                    yield Select(
+                        [("Auto-detect", PROBE_AUTO)],
+                        value=PROBE_AUTO,
+                        allow_blank=False,
+                        id="dbg-probe",
+                    )
+                    yield Select(
+                        [("Target...", TARGET_NONE)]
+                        + [(label, label) for label in TARGETS],
+                        value=TARGET_NONE,
+                        allow_blank=False,
+                        disabled=True,
+                        id="dbg-target",
+                    )
+                yield ProbeLog()
+                yield Input(placeholder="debugger command", id="dbg-input")
+            with Vertical(id="probe-actions"):
                 yield Button("Detect", id="dbg-detect", variant="primary")
-                yield Select(
-                    [("Auto-detect", PROBE_AUTO)],
-                    value=PROBE_AUTO,
-                    allow_blank=False,
-                    id="dbg-probe",
-                )
-                yield Select(
-                    [("Target...", TARGET_NONE)]
-                    + [(label, label) for label in TARGETS],
-                    value=TARGET_NONE,
-                    allow_blank=False,
-                    disabled=True,
-                    id="dbg-target",
-                )
+                yield Button("List LPC targets", id="dbg-list-lpc")
                 yield Button("Settings", id="dbg-settings")
                 yield Button("Start", id="dbg-start", variant="success")
                 yield Button("Stop", id="dbg-stop", variant="error")
                 yield Button("Kill stale", id="dbg-kill-stale", variant="warning")
-                yield Button("Install Pack", id="dbg-install-pack", variant="warning")
-                yield Button("Install stlink", id="dbg-install-stlink", variant="warning")
-            yield ProbeLog()
-            yield Input(placeholder="debugger command", id="dbg-input")
+                yield Button(
+                    "Install Pack",
+                    id="dbg-install-pack",
+                    variant="warning",
+                )
+                yield Button(
+                    "Install stlink",
+                    id="dbg-install-stlink",
+                    variant="warning",
+                )
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "dbg-backend":
@@ -278,6 +347,8 @@ class ProbeTab(Horizontal):
             self.open_settings()
         elif event.button.id == "dbg-detect":
             await self.detect_probes()
+        elif event.button.id == "dbg-list-lpc":
+            await self.list_lpc_targets()
         elif event.button.id == "dbg-start":
             await self.start()
         elif event.button.id == "dbg-stop":
@@ -370,10 +441,118 @@ class ProbeTab(Horizontal):
             self._target = None
             self._target_arch = None
             self._pyocd_target = value
+            self._persist_target(value)
         else:
             self._target = None
             self._target_arch = None
             self._pyocd_target = None
+
+    def _persist_target(self, target: str) -> None:
+        manager = getattr(self.app, "settings_manager", None)
+        if manager is None:
+            return
+        manager.settings["probe"]["target"] = target
+        try:
+            manager.save_settings()
+        except OSError:
+            self.query_one(ProbeLog).write(
+                "[yellow]could not persist selected target[/yellow]"
+            )
+
+    @staticmethod
+    def _parse_pyocd_targets(output: str) -> list[tuple[str, str]]:
+        targets: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for raw_line in output.splitlines():
+            columns = raw_line.split()
+            if len(columns) < 2:
+                continue
+            target_id = columns[0]
+            if (
+                target_id in seen
+                or "lpc" not in target_id.lower()
+                or not ProbeTab._valid_pyocd_target(target_id)
+            ):
+                continue
+            vendor = columns[1]
+            display_name = " ".join(columns[2:-1]) if len(columns) > 3 else ""
+            label = f"{target_id} - {vendor}"
+            if display_name:
+                label += f" {display_name}"
+            targets.append((label, target_id))
+            seen.add(target_id)
+        return targets
+
+    async def list_lpc_targets(self) -> None:
+        log = self.query_one(ProbeLog)
+        button = self.query_one("#dbg-list-lpc", Button)
+        pyocd_exe = shutil.which("pyocd")
+        if pyocd_exe is None:
+            log.write("[red]pyocd not found on PATH[/red]")
+            return
+
+        button.disabled = True
+        log.write("[cyan]loading LPC targets from pyocd...[/cyan]")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                pyocd_exe,
+                "list",
+                "--targets",
+                "-H",
+                "-n",
+                "lpc",
+                "--color",
+                "never",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await asyncio.wait_for(
+                process.communicate(),
+                timeout=10.0,
+            )
+        except TimeoutError:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+            log.write("[red]pyocd target query timed out[/red]")
+            return
+        except OSError as error:
+            log.write(
+                f"[red]could not run pyocd target query: "
+                f"{escape(str(error))}[/red]"
+            )
+            return
+        finally:
+            button.disabled = False
+
+        text = stdout.decode(errors="replace")
+        if process.returncode != 0:
+            log.write(
+                f"[red]pyocd target query failed with exit code "
+                f"{process.returncode}[/red]"
+            )
+            if text.strip():
+                log.write(escape(text.strip()))
+            return
+
+        targets = self._parse_pyocd_targets(text)
+        if not targets:
+            log.write("[yellow]pyocd reported no LPC targets[/yellow]")
+            return
+
+        self._custom_targets.update(target_id for _, target_id in targets)
+        target_select = self.query_one("#dbg-target", Select)
+        self._refresh_target_options(target_select)
+        target_select.disabled = False
+        current = self._pyocd_target
+        if current in self._custom_targets:
+            target_select.value = current
+        else:
+            target_select.value = TARGET_NONE
+        log.write(
+            f"[green]loaded {len(targets)} LPC targets; "
+            "select one from the target dropdown[/green]"
+        )
 
     @staticmethod
     def _list_probes() -> list[dict]:
