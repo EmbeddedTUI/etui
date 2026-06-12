@@ -472,7 +472,7 @@ class ToolsTab(Vertical):
                 with Horizontal(id="tools-actions"):
                     yield Button("Install", id="btn-tools-install", disabled=True)
                     yield Button("Rescan Tool", id="btn-tools-rescan", disabled=True)
-                yield RichLog(id="tools-log", highlight=True, markup=False)
+                yield RichLog(id="tools-log", highlight=True, markup=True)
 
     def on_mount(self) -> None:
         table = self.query_one("#tools-table", DataTable)
