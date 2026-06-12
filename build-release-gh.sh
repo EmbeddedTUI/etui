@@ -20,11 +20,14 @@ fi
 
 # Retrieve version argument
 VERSION=$1
-while [ -z "$VERSION" ]; do
-    read -p "Enter version tag to release (e.g., v0.1.0): " VERSION
+if [ -z "$VERSION" ]; then
+    read -p "Enter version tag to release [default: v0.1.0]: " VERSION
     # Strip leading/trailing whitespaces
     VERSION=$(echo "$VERSION" | xargs)
-done
+    if [ -z "$VERSION" ]; then
+        VERSION="v0.1.0"
+    fi
+fi
 
 # Basic formatting check (should start with 'v')
 if [[ ! "$VERSION" =~ ^v[0-9] ]]; then
