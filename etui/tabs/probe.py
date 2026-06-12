@@ -516,7 +516,7 @@ class ProbeTab(Vertical):
             target_label = str(settings.get("target", "")).strip()
             self._custom_targets.add(target_label)
             self._target = None
-            self._target_arch = None
+            self._target_arch = "thumb"
             self._pyocd_target = target_label
         try:
             target_select = self.query_one("#dbg-target", Select)
@@ -542,7 +542,7 @@ class ProbeTab(Vertical):
             self._pyocd_target = None
         elif value and value != TARGET_NONE:
             self._target = None
-            self._target_arch = None
+            self._target_arch = "thumb"
             self._pyocd_target = value
             self._persist_target(value)
         else:
