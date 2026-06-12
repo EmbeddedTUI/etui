@@ -167,6 +167,7 @@ class SettingsScreen(ModalScreen[dict | None]):
                 yield Button("Cancel", id="settings-cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
         if event.button.id == "settings-cancel":
             self.dismiss(None)
             return
@@ -183,6 +184,20 @@ class SettingsScreen(ModalScreen[dict | None]):
                 result[key] = raw
         self.dismiss(result)
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+
+
+FAMILIES = [
+    ("i.MX RT (imxrt)", "imxrt"),
+    ("LPC (lpc)", "lpc"),
+    ("STM32 (stm32)", "stm32"),
+    ("SAM (sam)", "sam"),
+    ("nRF (nrf)", "nrf"),
+    ("RP2040 (rp2040)", "rp2040"),
+    ("All", "all"),
+]
+
 
 class TargetFilterScreen(ModalScreen[str | None]):
     """ Modal dialog to prompt for a target family/name filter. """
@@ -192,11 +207,14 @@ class TargetFilterScreen(ModalScreen[str | None]):
             align: center middle;
         }
         #filter-box {
-            width: 40;
+            width: 45;
             height: auto;
             border: thick $accent;
             background: $surface;
             padding: 1 2;
+        }
+        #filter-box Select {
+            margin-bottom: 1;
         }
         #filter-box Input {
             margin-bottom: 1;
@@ -210,27 +228,58 @@ class TargetFilterScreen(ModalScreen[str | None]):
         }
     """
 
+    def __init__(self, default_value: str = ""):
+        super().__init__()
+        self.default_value = default_value
+        self.initial_select = "all"
+        for _, val in FAMILIES:
+            if val == default_value:
+                self.initial_select = val
+                break
+
     def compose(self) -> ComposeResult:
         with Vertical(id="filter-box"):
             yield Label("Filter pyOCD targets:")
-            yield Input(placeholder="e.g. stm32, lpc, nrf", id="filter-input")
+            yield Select(
+                [(label, val) for label, val in FAMILIES],
+                value=self.initial_select,
+                allow_blank=False,
+                id="filter-select",
+            )
+            yield Input(
+                value=self.default_value,
+                placeholder="e.g. stm32, lpc, nrf",
+                id="filter-input",
+            )
             with Horizontal(id="filter-buttons"):
                 yield Button("Query", id="filter-query", variant="success")
                 yield Button("Cancel", id="filter-cancel")
 
     def on_mount(self) -> None:
-        self.query_one("#filter-input", Input).focus()
+        self.query_one("#filter-select", Select).focus()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if event.select.id == "filter-select":
+            val = str(event.value)
+            inp = self.query_one("#filter-input", Input)
+            if val != "all":
+                inp.value = val
+            else:
+                inp.value = ""
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
         if event.button.id == "filter-cancel":
             self.dismiss(None)
         elif event.button.id == "filter-query":
             val = self.query_one("#filter-input", Input).value.strip()
-            self.dismiss(val if val else None)
+            self.dismiss(val)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
         val = event.value.strip()
-        self.dismiss(val if val else None)
+        self.dismiss(val)
 
 
 class LldbStart(Message):
@@ -535,12 +584,26 @@ class ProbeTab(Vertical):
         return targets
 
     def query_targets(self) -> None:
+        default_query = ""
+        if self._probe:
+            desc = self._probe.get("desc", "").lower()
+            if "lpc" in desc:
+                default_query = "lpc"
+            elif "st-link" in desc or "stlink" in desc or self._probe.get("transport") == "stlink":
+                default_query = "stm32"
+            elif "sam" in desc:
+                default_query = "sam"
+            elif "nrf" in desc or "nordic" in desc:
+                default_query = "nrf"
+            elif "rp2040" in desc or "pico" in desc:
+                default_query = "rp2040"
+
         def _on_close(result: str | None) -> None:
-            if not result:
+            if result is None:
                 return
             self.run_worker(self.list_targets(result), exclusive=True)
 
-        self.app.push_screen(TargetFilterScreen(), _on_close)
+        self.app.push_screen(TargetFilterScreen(default_query), _on_close)
 
     async def list_targets(self, filter_str: str) -> None:
         log = self.query_one(ProbeLog)
@@ -551,7 +614,10 @@ class ProbeTab(Vertical):
             return
 
         button.disabled = True
-        log.write(f"[cyan]loading targets matching '{escape(filter_str)}' from pyocd...[/cyan]")
+        if filter_str:
+            log.write(f"[cyan]loading targets matching '{escape(filter_str)}' from pyocd...[/cyan]")
+        else:
+            log.write("[cyan]loading all targets from pyocd...[/cyan]")
         try:
             process = await asyncio.create_subprocess_exec(
                 pyocd_exe,
@@ -596,10 +662,13 @@ class ProbeTab(Vertical):
 
         targets = self._parse_pyocd_targets(text, filter_str)
         if not targets:
-            log.write(f"[yellow]pyocd reported no targets matching '{escape(filter_str)}'[/yellow]")
+            if filter_str:
+                log.write(f"[yellow]pyocd reported no targets matching '{escape(filter_str)}'[/yellow]")
+            else:
+                log.write("[yellow]pyocd reported no targets[/yellow]")
             return
 
-        self._custom_targets.update(target_id for _, target_id in targets)
+        self._custom_targets = set(target_id for _, target_id in targets)
         target_select = self.query_one("#dbg-target", Select)
         self._refresh_target_options(target_select)
         target_select.disabled = False
@@ -608,10 +677,17 @@ class ProbeTab(Vertical):
             target_select.value = current
         else:
             target_select.value = TARGET_NONE
-        log.write(
-            f"[green]loaded {len(targets)} targets matching '{escape(filter_str)}'; "
-            "select one from the target dropdown[/green]"
-        )
+            self._pyocd_target = None
+        if filter_str:
+            log.write(
+                f"[green]loaded {len(targets)} targets matching '{escape(filter_str)}'; "
+                "select one from the target dropdown[/green]"
+            )
+        else:
+            log.write(
+                f"[green]loaded {len(targets)} targets; "
+                "select one from the target dropdown[/green]"
+            )
 
     @staticmethod
     def _list_probes() -> list[dict]:

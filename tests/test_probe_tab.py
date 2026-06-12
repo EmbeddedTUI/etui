@@ -15,6 +15,7 @@ from etui.tabs.probe import (
     KNOWN_USB_PROBES,
     LldbStart,
     ProbeTab,
+    TARGET_NONE,
 )
 
 
@@ -273,6 +274,32 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
             target_select.value = "lpc55s69"
             await pilot.pause()
             self.assertEqual(tab._pyocd_target, "lpc55s69")
+
+            # Subsequent query for 'stm32' targets
+            process2 = FakeTargetListProcess(
+                "\n".join(
+                    [
+                        "stm32f407 STMicro STM32F407 builtin",
+                    ]
+                )
+            )
+            with (
+                patch("etui.tabs.probe.shutil.which", return_value="/bin/pyocd"),
+                patch(
+                    "etui.tabs.probe.asyncio.create_subprocess_exec",
+                    new=AsyncMock(return_value=process2),
+                ) as create_process2,
+            ):
+                await tab.list_targets("stm32")
+
+            # The new targets should be added
+            self.assertIn("stm32f407", tab._custom_targets)
+            # The previous targets (both active 'lpc55s69' and inactive 'lpc1768') should be cleared
+            self.assertNotIn("lpc55s69", tab._custom_targets)
+            self.assertNotIn("lpc1768", tab._custom_targets)
+            # The dropdown selection should be reset to TARGET_NONE
+            self.assertEqual(target_select.value, TARGET_NONE)
+            self.assertIsNone(tab._pyocd_target)
 
     def test_openocd_fallback_uses_generic_cmsis_dap_interface(self) -> None:
         tab = ProbeTab()
