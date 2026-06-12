@@ -11,18 +11,51 @@ from textual.containers import Vertical, ScrollableContainer
 from textual.widgets import DirectoryTree, Button, Input, Label
 from textual.widgets import Static
 from rich.syntax import Syntax
+from textual.widgets import Markdown, MarkdownViewer
+
+_MD_SUFFIXES = {".md", ".markdown"}
+
+
+class SafeMarkdownViewer(MarkdownViewer):
+    """MarkdownViewer that only follows links to other Markdown files.
+
+    Overrides go() so every navigation — whether triggered by a link click or
+    by open_file() — resolves the target to an absolute path before the
+    navigator sees it.  This prevents the navigator's stale base-dir from
+    producing double-segment paths, and silently drops links to non-Markdown
+    targets (SVG images, external URLs, etc.).
+    """
+
+    async def go(self, location: str | Path) -> None:
+        path = Path(str(location))
+        if not path.is_absolute():
+            current = self.navigator.location
+            if current is not None:
+                path = (current.parent / path).resolve()
+            else:
+                path = path.resolve()
+
+        if path.suffix.lower() in _MD_SUFFIXES and path.is_file():
+            await super().go(path)
+
 
 class LeftWidget(DirectoryTree):
     def __init__(self):
         super().__init__("./")
+
 
 class FileViewer(Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal(id="viewer-controls"):
             yield Button("Content", id="btn-content", variant="primary")
             yield Button("Details", id="btn-details")
-        with ScrollableContainer():
+        with ScrollableContainer(id="file-scroll"):
             yield Static(id="file-display", expand=True)
+        yield SafeMarkdownViewer(show_table_of_contents=False, id="md-viewer")
+
+    def on_mount(self) -> None:
+        self.query_one("#md-viewer", SafeMarkdownViewer).display = False
+
 
 class FilesTab(Vertical):
     """ Files tab"""
@@ -69,6 +102,12 @@ class FilesTab(Vertical):
     FilesTab #file-display {
         width: auto;
     }
+    FilesTab #file-scroll {
+        height: 1fr;
+    }
+    FilesTab #md-viewer {
+        height: 1fr;
+    }
     """
 
     def __init__(self):
@@ -95,7 +134,6 @@ class FilesTab(Vertical):
         self.query_one("#txt-workspace-root", Input).value = str(event.path)
 
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
-        """Called when the user selects a file in the directory tree."""
         event.stop()
         self.current_path = event.path
         self.render_file()
@@ -125,12 +163,12 @@ class FilesTab(Vertical):
                 path_input.value = path_str
             except Exception:
                 return
-        
+
         path = Path(path_str).expanduser().resolve()
         if not path.is_dir():
             self.notify(f"Path '{path_str}' is not a valid directory.", severity="error")
             return
-        
+
         if hasattr(self.app, "set_workspace_root"):
             await self.app.set_workspace_root(str(path))
             self.notify(f"Workspace root set to {path}")
@@ -141,90 +179,85 @@ class FilesTab(Vertical):
         self.view_mode = "content"
         self.render_file()
 
+    def _is_markdown(self, path: Path) -> bool:
+        return path.suffix.lower() in _MD_SUFFIXES
+
     def render_file(self) -> None:
         if not self.current_path:
             return
 
+        scroll = self.query_one("#file-scroll")
         display = self.query_one("#file-display", Static)
+        md_viewer = self.query_one("#md-viewer", SafeMarkdownViewer)
         btn_content = self.query_one("#btn-content", Button)
         btn_details = self.query_one("#btn-details", Button)
 
-        # Update button visual state
         btn_content.variant = "primary" if self.view_mode == "content" else "default"
         btn_details.variant = "primary" if self.view_mode == "details" else "default"
 
         if self.view_mode == "details":
+            scroll.display = True
+            md_viewer.display = False
             display.update(self.get_file_details(self.current_path))
-        else:
-            try:
-                # Check file size to prevent freezing on large files
-                try:
-                    file_size = os.path.getsize(self.current_path)
-                except Exception:
-                    file_size = 0
+            return
 
-                MAX_HIGHLIGHT_SIZE = 250 * 1024  # 250 KB
-                if file_size > MAX_HIGHLIGHT_SIZE:
-                    # Load only the first 500 lines to prevent UI freezing
-                    lines = []
-                    with open(self.current_path, "r", encoding="utf-8", errors="replace") as f:
-                        for _ in range(500):
-                            line = f.readline()
-                            if not line:
-                                break
-                            lines.append(line)
-                    content = "".join(lines)
-                    content += "\n\n... [TRUNCATED - File is larger than 250KB] ...\n"
-                    
-                    try:
-                        from pygments.lexers import get_lexer_for_filename
-                        lexer = get_lexer_for_filename(str(self.current_path))
-                        lexer_name = lexer.aliases[0] if lexer.aliases else lexer.name
-                    except Exception:
-                        lexer_name = "text"
-                        
-                    syntax = Syntax(
-                        content,
-                        lexer_name,
-                        line_numbers=True,
-                        word_wrap=False,
-                        indent_guides=True,
-                        theme="monokai"
-                    )
-                    display.update(syntax)
-                    self.notify("Large file detected: showing first 500 lines only", severity="warning")
-                else:
-                    # Use Syntax.from_path to read and highlight the file
-                    syntax = Syntax.from_path(
-                        str(self.current_path),
-                        line_numbers=True,
-                        word_wrap=False,
-                        indent_guides=True,
-                        theme="monokai"
-                    )
-                    display.update(syntax)
-            except Exception:
-                # Fallback to details for non-text/binary files
+        # Content mode — use Viewer for Markdown, Syntax for everything else.
+        if self._is_markdown(self.current_path):
+            scroll.display = False
+            md_viewer.display = True
+            self.call_after_refresh(md_viewer.go, self.current_path)
+            return
+
+        scroll.display = True
+        md_viewer.display = False
+
+        try:
+            file_size = os.path.getsize(self.current_path)
+        except Exception:
+            file_size = 0
+
+        MAX_HIGHLIGHT_SIZE = 250 * 1024
+        try:
+            if file_size > MAX_HIGHLIGHT_SIZE:
+                lines = []
+                with open(self.current_path, "r", encoding="utf-8", errors="replace") as f:
+                    for _ in range(500):
+                        line = f.readline()
+                        if not line:
+                            break
+                        lines.append(line)
+                content = "".join(lines) + "\n\n... [TRUNCATED] ...\n"
                 try:
-                    details = self.get_file_details(self.current_path)
-                    display.update(details)
-                    self.notify("Non-text file detected, showing details instead", severity="warning")
-                except Exception as e:
-                    display.update(f"[red]Error showing file details: {e}[/red]")
+                    from pygments.lexers import get_lexer_for_filename
+                    lexer = get_lexer_for_filename(str(self.current_path))
+                    lexer_name = lexer.aliases[0] if lexer.aliases else lexer.name
+                except Exception:
+                    lexer_name = "text"
+                syntax = Syntax(content, lexer_name, line_numbers=True,
+                                word_wrap=False, indent_guides=True, theme="monokai")
+                display.update(syntax)
+                self.notify("Large file: showing first 500 lines only", severity="warning")
+            else:
+                syntax = Syntax.from_path(str(self.current_path), line_numbers=True,
+                                          word_wrap=False, indent_guides=True, theme="monokai")
+                display.update(syntax)
+        except Exception:
+            try:
+                display.update(self.get_file_details(self.current_path))
+                self.notify("Non-text file: showing details instead", severity="warning")
+            except Exception as e:
+                display.update(f"[red]Error: {e}[/red]")
 
     def get_file_details(self, path) -> str:
         try:
             stats = os.stat(path)
             size = stats.st_size
-            # Format size
             for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
                 if size < 1024.0:
                     break
                 size /= 1024.0
             size_str = f"{size:.2f} {unit}"
-            
             mtype, _ = mimetypes.guess_type(str(path))
-            
             details = [
                 f"[bold]Path:[/bold] {path}",
                 f"[bold]Size:[/bold] {size_str} ({stats.st_size} bytes)",

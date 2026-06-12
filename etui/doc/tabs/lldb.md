@@ -2,7 +2,6 @@
 
 An integrated LLDB debugger dashboard showing registers, assembly, stack, and backtrace panels in the terminal.
 
-![LLDB tab](../screenshots/lldb.svg)
 
 ## Layout
 

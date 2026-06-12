@@ -2,7 +2,6 @@
 
 Configure and build CMake projects without leaving the terminal.
 
-![CMake tab](../screenshots/cmake.svg)
 
 ## Layout
 

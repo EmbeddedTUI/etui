@@ -2,7 +2,6 @@
 
 App information and documentation screenshot capture.
 
-![About tab](../screenshots/about.svg)
 
 ## Layout
 

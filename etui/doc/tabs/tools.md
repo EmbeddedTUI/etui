@@ -2,7 +2,6 @@
 
 Detect, validate, and install the external command-line tools that etui depends on.
 
-![Tools tab](../screenshots/tools.svg)
 
 ## Layout
 

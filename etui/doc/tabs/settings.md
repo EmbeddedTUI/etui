@@ -2,7 +2,6 @@
 
 Centralized configuration for etui and its integrations. Settings are stored in `~/.config/etui/settings.yaml` and applied at runtime without restarting.
 
-![Settings tab](../screenshots/settings.svg)
 
 ## Layout
 

@@ -2,7 +2,6 @@
 
 Connect a hardware debug probe, start a GDB server, and launch a debug session.
 
-![Probe tab](../screenshots/probe.svg)
 
 ## Layout
 

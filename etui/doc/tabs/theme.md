@@ -2,7 +2,6 @@
 
 Preview and select the color scheme for the LLDB dashboard.
 
-![Theme tab](../screenshots/theme.svg)
 
 ## Layout
 

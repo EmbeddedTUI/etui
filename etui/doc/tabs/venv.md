@@ -2,7 +2,6 @@
 
 Manage an external [PDM](https://pdm-project.org) project's virtual environment and packages without leaving etui.
 
-![Venv tab](../screenshots/venv.svg)
 
 ## Layout
 

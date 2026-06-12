@@ -2,7 +2,6 @@
 
 A visual Git dashboard for staging, reviewing diffs, and committing changes.
 
-![Git tab](../screenshots/git.svg)
 
 ## Layout
 

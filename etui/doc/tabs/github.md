@@ -2,7 +2,6 @@
 
 Browse issues and pull requests for the GitHub repository associated with your workspace, powered by the `gh` CLI.
 
-![GitHub tab](../screenshots/github.svg)
 
 ## Layout
 

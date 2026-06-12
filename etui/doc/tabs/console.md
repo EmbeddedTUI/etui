@@ -2,7 +2,6 @@
 
 An interactive shell powered by [xonsh](https://xonsh.org), running inside the workspace directory.
 
-![Console tab](../screenshots/console.svg)
 
 ## Layout
 

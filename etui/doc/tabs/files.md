@@ -2,7 +2,6 @@
 
 Browse and preview the files in your workspace.
 
-![Files tab](../screenshots/files.svg)
 
 ## Layout
 

@@ -2,7 +2,6 @@
 
 A serial port terminal for communicating with embedded targets over UART.
 
-![Serial tab](../screenshots/serial.svg)
 
 ## Layout
 

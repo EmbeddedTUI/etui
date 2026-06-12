@@ -2,7 +2,6 @@
 
 Browse the built-in documentation for every tab without leaving etui.
 
-![Help tab](../screenshots/help.svg)
 
 ## Layout
 
