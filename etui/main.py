@@ -114,22 +114,23 @@ class EtuiApp(App):
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         # Focus the appropriate input/widget when tabs are switched
-        if event.tab.id == "files":
+        pane_id = event.pane.id
+        if pane_id == "files":
             try:
                 self.query_one("LeftWidget").focus()
             except Exception:
                 pass
-        elif event.tab.id in ("console", "serial"):
+        elif pane_id in ("console", "serial"):
             try:
                 self.query_one("#main-input").focus()
             except Exception:
                 pass
-        elif event.tab.id == "debugger":
+        elif pane_id == "debugger":
             try:
                 self.query_one("#dbg-input").focus()
             except Exception:
                 pass
-        elif event.tab.id == "lldb":
+        elif pane_id == "lldb":
             try:
                 self.query_one("#lldb-input").focus()
             except Exception:

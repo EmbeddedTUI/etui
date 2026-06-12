@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:7b113c235a52a3566036c2c65554e10093c7958add5c4c1744758abd15338aef"
+content_hash = "sha256:7a4a078d97a82e646d24bb3511e753450a4a21a01435b1f80874e6d25a24e57b"
 
 [[metadata.targets]]
 requires_python = ">=3.13"
@@ -1129,6 +1129,18 @@ groups = ["default"]
 files = [
     {file = "wcwidth-0.8.0-py3-none-any.whl", hash = "sha256:8c75e6099cefd197c4bcc67a486f70b5dbc68f997c05f34a811d853910450d64"},
     {file = "wcwidth-0.8.0.tar.gz", hash = "sha256:68a882ff6d14e3d14e0cae590b96a0551be64ce4905408112a8254434a1bdf69"},
+]
+
+[[package]]
+name = "xonsh"
+version = "0.23.8"
+requires_python = ">=3.11"
+summary = "Python-powered shell. Full-featured, cross-platform and AI-friendly. "
+groups = ["default"]
+files = [
+    {file = "xonsh-0.23.8-py313-none-any.whl", hash = "sha256:1b7335522a6ecd63f0d84151977a7a9050874d3ecec00cf79919d0770bebb1b4"},
+    {file = "xonsh-0.23.8-py314-none-any.whl", hash = "sha256:2a411fc47958c6107b3e13372655d18c52be98368e2159a1910cfde77124b3b1"},
+    {file = "xonsh-0.23.8.tar.gz", hash = "sha256:541bb976c93a81571792644403bae8737145023da5f48d4c493909ab5c04ba0f"},
 ]
 
 [[package]]
