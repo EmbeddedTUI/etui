@@ -2,6 +2,7 @@
 # Copyright (c) 2026 32bitmico LLC
 
 import sys
+from pathlib import Path
 
 
 from textual.app import App, ComposeResult
@@ -19,6 +20,7 @@ if __package__:
     from .tabs.theme import ThemeTab, ThemeChanged
     from .tabs.serial import SerialTab
     from .tabs.venv import VenvTab
+    from .tabs.git import GitTab, RepositoryChanged
 else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
@@ -28,6 +30,7 @@ else:
     from tabs.theme import ThemeTab, ThemeChanged
     from tabs.serial import SerialTab
     from tabs.venv import VenvTab
+    from tabs.git import GitTab, RepositoryChanged
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -95,6 +98,8 @@ class EtuiApp(App):
                 yield LldbTab()
             with TabPane("Theme", id="theme"):
                 yield ThemeTab()
+            with TabPane("Git", id="git"):
+                yield GitTab()
             with TabPane("Venv", id="venv"):
                 yield VenvTab()
             with TabPane("About", id="about"):
@@ -157,6 +162,11 @@ class EtuiApp(App):
                 self.query_one("#lldb-input").focus()
             except Exception:
                 pass
+        elif pane_id == "git":
+            try:
+                self.query_one("#txt-repo-path").focus()
+            except Exception:
+                pass
         elif pane_id == "venv":
             try:
                 self.query_one("#venv-project-path").focus()
@@ -172,6 +182,18 @@ class EtuiApp(App):
                     exit_on_error=False,
                 )
 
+        if pane_id != "git":
+            try:
+                git_tab = self.query_one(GitTab)
+                if git_tab.busy:
+                    self.run_worker(
+                        git_tab.cancel_active_operation(),
+                        name="cancel-git-operation",
+                        exit_on_error=False,
+                    )
+            except Exception:
+                pass
+
     def on_command_message(self, message: CommandMessage) -> None:
         tabs = self.query_one(TabbedContent)
         if tabs.active == "serial":
@@ -182,6 +204,23 @@ class EtuiApp(App):
             #self.notify(f"Got command message {message.command}")
             console = self.query_one(ConsoleTab)
             self.run_worker(console.run_command(message.command))
+
+    async def on_repository_changed(self, message: RepositoryChanged) -> None:
+        # Update FilesTab path
+        try:
+            files_tab = self.query_one(FilesTab)
+            files_tab.query_one("LeftWidget").path = Path(message.path)
+        except Exception:
+            pass
+
+        # Update VenvTab path and select it if it has a pyproject.toml
+        try:
+            venv_tab = self.query_one(VenvTab)
+            venv_tab.query_one("#venv-project-path", Input).value = message.path
+            if (Path(message.path) / "pyproject.toml").is_file():
+                self.run_worker(venv_tab._select_project())
+        except Exception:
+            pass
 
     
 
