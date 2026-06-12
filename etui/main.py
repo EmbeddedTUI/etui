@@ -15,7 +15,7 @@ if __package__:
     from .tabs.about import AboutTab
     from .tabs.console import ConsoleTab
     from .tabs.files import FilesTab
-    from .tabs.debugger import DebuggerTab, LldbStart
+    from .tabs.probe import ProbeTab, LldbStart
     from .tabs.lldb import LldbTab
     from .tabs.theme import ThemeTab, ThemeChanged
     from .tabs.serial import SerialTab
@@ -28,7 +28,7 @@ else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
     from tabs.files import FilesTab
-    from tabs.debugger import DebuggerTab, LldbStart
+    from tabs.probe import ProbeTab, LldbStart
     from tabs.lldb import LldbTab
     from tabs.theme import ThemeTab, ThemeChanged
     from tabs.serial import SerialTab
@@ -120,8 +120,8 @@ class EtuiApp(App):
                 yield CMakeTab()
             with TabPane("Serial", id="serial"):
                 yield SerialTab()
-            with TabPane("Debugger", id="debugger"):
-                yield DebuggerTab()
+            with TabPane("Probe", id="probe"):
+                yield ProbeTab()
             with TabPane("LLDB", id="lldb"):
                 yield LldbTab()
             with TabPane("Venv", id="venv"):
@@ -191,7 +191,7 @@ class EtuiApp(App):
                 self.query_one("#main-input").focus()
             except Exception:
                 pass
-        elif pane_id == "debugger":
+        elif pane_id == "probe":
             try:
                 self.query_one("#dbg-input").focus()
             except Exception:

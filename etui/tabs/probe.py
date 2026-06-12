@@ -116,7 +116,7 @@ class SettingsScreen(ModalScreen[dict | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings-box"):
-            yield Label("Debugger Settings")
+            yield Label("Probe Settings")
             for key, value in self._settings.items():
                 yield Label(key)
                 yield Input(value=str(value), id=f"set-{key}")
@@ -151,14 +151,14 @@ class LldbStart(Message):
         self.arch = arch
 
 
-class DebuggerLog(RichLog):
+class ProbeLog(RichLog):
     def __init__(self):
         super().__init__(highlight=True, markup=True)
-        self.write("Debugger ready")
+        self.write("Probe ready")
 
 
-class DebuggerTab(Horizontal):
-    """ Debugger tab - drives pyocd, openocd or gdb """
+class ProbeTab(Horizontal):
+    """ Probe tab - drives pyocd, openocd or gdb """
 
     def __init__(self):
         super().__init__()
@@ -186,7 +186,7 @@ class DebuggerTab(Horizontal):
         yield ToolWarningBanner("gnu-arm", "GNU Arm Toolchain", id="gnu-arm-tool-warning")
 
         with Vertical():
-            with Horizontal(id="debugger-controls"):
+            with Horizontal(id="probe-controls"):
                 yield Select(
                     [(name, name) for name in BACKENDS],
                     value="pyocd",
@@ -212,7 +212,7 @@ class DebuggerTab(Horizontal):
                 yield Button("Start", id="dbg-start", variant="success")
                 yield Button("Stop", id="dbg-stop", variant="error")
                 yield Button("Kill stale", id="dbg-kill-stale", variant="warning")
-            yield DebuggerLog()
+            yield ProbeLog()
             yield Input(placeholder="debugger command", id="dbg-input")
 
     def on_select_changed(self, event: Select.Changed) -> None:
@@ -248,7 +248,7 @@ class DebuggerTab(Horizontal):
                 return
             self._settings = result
             save_settings(result)
-            self.query_one(DebuggerLog).write(
+            self.query_one(ProbeLog).write(
                 f"[green]settings saved[/green] [dim]{SETTINGS_PATH}[/dim]"
             )
 
@@ -273,7 +273,7 @@ class DebuggerTab(Horizontal):
                 uid = probe.unique_id
                 desc = probe.description or probe.product_name or "probe"
                 seen_uids.add(uid)
-                driver, interface = DebuggerTab._classify(desc)
+                driver, interface = ProbeTab._classify(desc)
                 result.append(
                     {"uid": uid, "desc": desc, "driver": driver,
                      "interface": interface}
@@ -325,7 +325,7 @@ class DebuggerTab(Horizontal):
         return "pyocd", None
 
     async def detect_probes(self) -> None:
-        log = self.query_one(DebuggerLog)
+        log = self.query_one(ProbeLog)
         probe_select = self.query_one("#dbg-probe", Select)
         log.write("[cyan]detecting probes...[/cyan]")
         try:
@@ -372,11 +372,11 @@ class DebuggerTab(Horizontal):
         is_xds110 = bool(self._probe and self._probe.get("interface"))
         target_select.disabled = not is_xds110
         if is_xds110 and self._target is None:
-            self.query_one(DebuggerLog).write(
+            self.query_one(ProbeLog).write(
                 "[yellow]select target MCU (MSPM0L / MSPM0G / MSPM0C)[/yellow]"
             )
 
-    def _build_argv(self, log: "DebuggerLog") -> list[str] | None:
+    def _build_argv(self, log: "ProbeLog") -> list[str] | None:
         """ Build the backend command line for the selected probe. """
         backend = self._backend
         argv = list(BACKENDS[backend])
@@ -417,7 +417,7 @@ class DebuggerTab(Horizontal):
         return argv
 
     async def start(self) -> None:
-        log = self.query_one(DebuggerLog)
+        log = self.query_one(ProbeLog)
         if self._proc is not None and self._proc.returncode is None:
             log.write("[yellow]debugger already running[/yellow]")
             return
@@ -464,7 +464,7 @@ class DebuggerTab(Horizontal):
             self._proc.kill()
 
     async def stop(self) -> None:
-        log = self.query_one(DebuggerLog)
+        log = self.query_one(ProbeLog)
         if self._proc is None or self._proc.returncode is not None:
             log.write("[yellow]debugger not running[/yellow]")
             return
@@ -500,7 +500,7 @@ class DebuggerTab(Horizontal):
         return killed
 
     async def kill_stale(self) -> None:
-        log = self.query_one(DebuggerLog)
+        log = self.query_one(ProbeLog)
         own_pid = self._proc.pid if self._proc else None
         log.write("[cyan]killing stale debugger processes...[/cyan]")
         try:
@@ -514,7 +514,7 @@ class DebuggerTab(Horizontal):
             log.write("[yellow]no stale processes found[/yellow]")
 
     async def send_command(self, command: str) -> None:
-        log = self.query_one(DebuggerLog)
+        log = self.query_one(ProbeLog)
         if self._proc is None or self._proc.returncode is not None:
             log.write("[red]debugger not running - press Start[/red]")
             return
@@ -524,7 +524,7 @@ class DebuggerTab(Horizontal):
         await self._proc.stdin.drain()
 
     async def _read_output(self) -> None:
-        log = self.query_one(DebuggerLog)
+        log = self.query_one(ProbeLog)
         assert self._proc is not None and self._proc.stdout is not None
         while True:
             line = await self._proc.stdout.readline()

@@ -293,7 +293,7 @@ class LldbTab(Horizontal):
 
     async def on_mount(self) -> None:
         self.query_one(LldbLog).write(
-            "[dim]waiting for debugger - start it in the Debugger tab[/dim]"
+            "[dim]waiting for probe - start it in the Probe tab[/dim]"
         )
 
     async def connect(self, port: int, arch: str | None) -> None:
