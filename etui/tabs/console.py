@@ -15,6 +15,47 @@ from textual.widgets import Input, Label, RichLog
 CWD_MARKER = "__ETUI_XONSH_CWD__"
 
 
+class ConsoleInput(Input):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.history: list[str] = []
+        self.history_index: int = -1
+        self.temp_input: str = ""
+
+    def on_key(self, event) -> None:
+        if event.key == "enter":
+            val = self.value.strip()
+            if val:
+                if not self.history or self.history[-1] != val:
+                    self.history.append(val)
+            self.history_index = -1
+            self.temp_input = ""
+        elif event.key == "up":
+            event.prevent_default()
+            event.stop()
+            if not self.history:
+                return
+            if self.history_index == -1:
+                self.temp_input = self.value
+                self.history_index = len(self.history) - 1
+            elif self.history_index > 0:
+                self.history_index -= 1
+            self.value = self.history[self.history_index]
+            self.cursor_position = len(self.value)
+        elif event.key == "down":
+            event.prevent_default()
+            event.stop()
+            if self.history_index == -1:
+                return
+            if self.history_index < len(self.history) - 1:
+                self.history_index += 1
+                self.value = self.history[self.history_index]
+            else:
+                self.history_index = -1
+                self.value = self.temp_input
+            self.cursor_position = len(self.value)
+
+
 class LogWidget(RichLog):
     def __init__(self) -> None:
         super().__init__(highlight=True, markup=True, wrap=True)
@@ -82,7 +123,7 @@ class ConsoleTab(Horizontal):
             yield LogWidget()
             with Horizontal(id="console-input-line"):
                 yield Label("[bold cyan]xonsh>[/bold cyan]", id="console-prompt")
-                yield Input(id="console-input", select_on_focus=False)
+                yield ConsoleInput(id="console-input", select_on_focus=False)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "console-input":

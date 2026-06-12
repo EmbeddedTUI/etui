@@ -71,6 +71,50 @@ class ConsoleWidgetTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("Traceback", text)
             self.assertEqual(text.count("xonsh> echo ok"), 1)
 
+    async def test_console_history_navigation(self) -> None:
+        app = ConsoleTestApp()
+        async with app.run_test() as pilot:
+            console_input = app.query_one("#console-input")
+            console_input.focus()
+
+            # Submit first command
+            await pilot.press("e", "c", "h", "o", "space", "1", "enter")
+            for _ in range(100):
+                if not app.query_one(ConsoleTab)._command_lock.locked():
+                    break
+                await pilot.pause()
+
+            # Submit second command
+            await pilot.press("e", "c", "h", "o", "space", "2", "enter")
+            for _ in range(100):
+                if not app.query_one(ConsoleTab)._command_lock.locked():
+                    break
+                await pilot.pause()
+
+            # Type something but do not submit
+            await pilot.press("t", "e", "m", "p")
+            self.assertEqual(console_input.value, "temp")
+
+            # Press Up arrow: should show the last submitted command ("echo 2")
+            await pilot.press("up")
+            self.assertEqual(console_input.value, "echo 2")
+
+            # Press Up arrow again: should show the first submitted command ("echo 1")
+            await pilot.press("up")
+            self.assertEqual(console_input.value, "echo 1")
+
+            # Press Up arrow again: should stay at "echo 1" (first command)
+            await pilot.press("up")
+            self.assertEqual(console_input.value, "echo 1")
+
+            # Press Down arrow: should go back to "echo 2"
+            await pilot.press("down")
+            self.assertEqual(console_input.value, "echo 2")
+
+            # Press Down arrow again: should restore the typed text ("temp")
+            await pilot.press("down")
+            self.assertEqual(console_input.value, "temp")
+
 
 if __name__ == "__main__":
     unittest.main()
