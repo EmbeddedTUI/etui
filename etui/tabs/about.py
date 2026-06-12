@@ -7,8 +7,13 @@ import asyncio
 from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.containers import Center, Vertical
-from textual.widgets import Button, Label, Static, TabbedContent
+from textual.containers import Center, ScrollableContainer, Vertical
+from textual.widgets import Button, Label, RichLog, Static, TabbedContent
+
+if __package__:
+    from ..version import COPYRIGHT
+else:
+    from version import COPYRIGHT
 
 
 # Tab IDs in display order — must match the TabPane ids in main.py.
@@ -71,9 +76,14 @@ class AboutTab(Vertical):
     DEFAULT_CSS = """
     AboutTab {
         height: 1fr;
-        align: center middle;
+        layout: vertical;
     }
-    AboutTab #about-content {
+    AboutTab #about-top {
+        height: auto;
+        align: center middle;
+        padding: 1 2;
+    }
+    AboutTab #about-info {
         width: auto;
         height: auto;
         align: center middle;
@@ -82,38 +92,52 @@ class AboutTab(Vertical):
         text-align: center;
         width: auto;
     }
+    AboutTab #about-buttons {
+        height: auto;
+        layout: horizontal;
+        align: center middle;
+        padding: 0 2;
+    }
+    AboutTab #about-buttons Button {
+        margin: 1 1;
+    }
     AboutTab #about-status {
-        margin-top: 1;
+        height: auto;
         color: $text-muted;
         text-align: center;
-        width: auto;
+        padding: 0 2;
     }
-    AboutTab Button {
-        margin-top: 2;
+    AboutTab #self-test-log {
+        height: 1fr;
+        border-top: solid $accent;
+        margin-top: 1;
+        display: none;
     }
     """
 
     def compose(self) -> ComposeResult:
-        with Center():
-            with Vertical(id="about-content"):
-                yield Static("[bold]etui[/bold] — Embedded TUI")
-                yield Static("(c) 32bitmicro LLC 2026")
-                yield Static("")
-                yield Static(
-                    "A terminal-based IDE for embedded development.\n"
-                    "Files · Console · Tools · Git · GitHub · CMake\n"
-                    "Serial · Probe · LLDB · Venv · Settings · Theme"
-                )
-                yield Button(
-                    "Capture Screenshots",
-                    id="btn-capture-screenshots",
-                    variant="primary",
-                )
-                yield Label("", id="about-status")
+        with Vertical(id="about-top"):
+            with Center():
+                with Vertical(id="about-info"):
+                    yield Static("[bold]etui[/bold] — Embedded TUI")
+                    yield Static(COPYRIGHT)
+                    yield Static("")
+                    yield Static(
+                        "A terminal-based IDE for embedded development.\n"
+                        "Files · Console · Tools · Git · GitHub · CMake\n"
+                        "Serial · Probe · LLDB · Venv · Settings · Theme"
+                    )
+            with Center(id="about-buttons"):
+                yield Button("Capture Screenshots", id="btn-capture-screenshots", variant="primary")
+                yield Button("Self Test", id="btn-self-test", variant="default")
+            yield Label("", id="about-status")
+        yield RichLog(id="self-test-log", highlight=False, markup=True)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-capture-screenshots":
             await self._run_capture()
+        elif event.button.id == "btn-self-test":
+            await self._run_self_test()
 
     async def _run_capture(self) -> None:
         button = self.query_one("#btn-capture-screenshots", Button)
@@ -134,3 +158,33 @@ class AboutTab(Vertical):
             )
         else:
             status.update(f"Done. {len(saved)} screenshots saved to doc/screenshots/")
+
+    async def _run_self_test(self) -> None:
+        if __package__:
+            from ..self_test import run_all
+        else:
+            from self_test import run_all
+
+        btn = self.query_one("#btn-self-test", Button)
+        status = self.query_one("#about-status", Label)
+        log = self.query_one("#self-test-log", RichLog)
+
+        btn.disabled = True
+        log.display = True
+        log.clear()
+        status.update("Running self-tests…")
+
+        import asyncio
+        results = await asyncio.get_event_loop().run_in_executor(None, run_all)
+
+        passed = sum(r.passed for r in results)
+        total = len(results)
+        for r in results:
+            color = "green" if r.passed else "red"
+            tag = "PASS" if r.passed else "FAIL"
+            log.write(f"[{color}]{tag}[/{color}]  {r.name}: {r.message}")
+
+        summary_color = "green" if passed == total else "red"
+        log.write(f"\n[{summary_color}]{passed}/{total} passed[/{summary_color}]")
+        status.update(f"Self-test: {passed}/{total} passed")
+        btn.disabled = False

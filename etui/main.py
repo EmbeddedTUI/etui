@@ -4,6 +4,7 @@
 import sys
 from pathlib import Path
 
+from .version import COPYRIGHT  # noqa: F401 — re-exported for callers
 
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, RichLog
@@ -427,6 +428,10 @@ def main():
         _run_screenshots(Path(sys.argv[2]) if len(sys.argv) >= 3 else None)
         return
 
+    if len(sys.argv) >= 2 and sys.argv[1] == "--self-test":
+        _run_self_test()
+        return
+
     print("Hello from etui!")
     app = EtuiApp()
     app.run()
@@ -460,6 +465,23 @@ def _run_screenshots(output_dir: Path | None) -> None:
     for entry in failed:
         print(f"  FAILED {entry}", file=sys.stderr)
     print(f"{len(saved)} screenshots written to {dest}")
+
+def _run_self_test() -> None:
+    """Run built-in self-tests, print results, and exit 0/1."""
+    if __package__:
+        from .self_test import run_all
+    else:
+        from self_test import run_all
+
+    results = run_all()
+    passed = sum(r.passed for r in results)
+    total = len(results)
+    for r in results:
+        tag = "PASS" if r.passed else "FAIL"
+        print(f"  {tag}  {r.name}: {r.message}")
+    print(f"\n{passed}/{total} passed")
+    sys.exit(0 if passed == total else 1)
+
 
 if __name__ == "__main__":
     main()
