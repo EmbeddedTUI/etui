@@ -89,7 +89,7 @@ class EtuiApp(App):
                 yield ThemeTab()
             with TabPane("About", id="about"):
                 yield AboutTab()
-        yield Input()
+        yield Input(id="main-input")
         yield Footer()
 
     # dispatch commands based on the first character
@@ -111,6 +111,29 @@ class EtuiApp(App):
 
     async def on_theme_changed(self, message: ThemeChanged) -> None:
         await self.query_one(LldbTab).set_theme(message.theme)
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        # Focus the appropriate input/widget when tabs are switched
+        if event.tab.id == "files":
+            try:
+                self.query_one("LeftWidget").focus()
+            except Exception:
+                pass
+        elif event.tab.id in ("console", "serial"):
+            try:
+                self.query_one("#main-input").focus()
+            except Exception:
+                pass
+        elif event.tab.id == "debugger":
+            try:
+                self.query_one("#dbg-input").focus()
+            except Exception:
+                pass
+        elif event.tab.id == "lldb":
+            try:
+                self.query_one("#lldb-input").focus()
+            except Exception:
+                pass
 
     def on_command_message(self, message: CommandMessage) -> None:
         tabs = self.query_one(TabbedContent)
