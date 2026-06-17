@@ -14,10 +14,12 @@ steps:
     description: |
       ## 1. Update the OS
       Refresh the apt package index and upgrade installed packages.
-      Requires `sudo`; you may be prompted for your password in the terminal.
+      Requires `sudo`; you will be prompted for your password.
+      Runs apt non-interactively so it cannot hang on debconf or
+      needrestart prompts.
     commands:
-      - "sudo apt update"
-      - "sudo apt upgrade -y"
+      - "sudo apt-get update"
+      - "sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -y upgrade"
     mode: manual
     confirm: true
     allow_skip: true
@@ -32,7 +34,8 @@ steps:
       ninja, device-tree-compiler, Python venv, toolchain helpers, …).
     commands:
       - >
-        sudo apt install --no-install-recommends -y git cmake ninja-build gperf
+        sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install
+        --no-install-recommends -y git cmake ninja-build gperf
         ccache dfu-util device-tree-compiler wget python3-dev python3-venv python3-tk
         xz-utils file make gcc gcc-multilib g++-multilib libsdl2-dev libmagic1
     mode: manual
