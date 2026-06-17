@@ -162,12 +162,21 @@ class TabTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 tab._resolve_cwd(outside)
 
-    def test_workflow_dirs_includes_repo_and_home(self) -> None:
+    def test_workflow_dirs_includes_repo_home_and_builtin(self) -> None:
+        from etui.workflow.loader import builtin_dir
+
         tab = WorkflowTab()
         tab.repo_path = Path("/tmp/somerepo")
         dirs = tab._workflow_dirs()
         self.assertIn(Path("/tmp/somerepo") / ".etui" / "workflows", dirs)
-        self.assertEqual(dirs[-1], Path.home() / ".etui" / "workflows")
+        self.assertIn(Path.home() / ".etui" / "workflows", dirs)
+        self.assertEqual(dirs[-1], builtin_dir())
+
+    def test_builtin_workflows_discoverable(self) -> None:
+        from etui.workflow.loader import builtin_dir, list_workflows
+
+        names = [m.name for m in list_workflows(builtin_dir())]
+        self.assertIn("Zephyr Getting Started", names)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,25 @@
+name: "Hello World"
+description: "Minimal two-step demo workflow"
+version: "1.0"
+variables:
+  NAME: "etui"
+
+steps:
+  - id: greet
+    title: "Greet"
+    description: |
+      ## Greet
+      Prints a greeting using the `$NAME` workflow variable.
+    commands:
+      - "echo Hello from $NAME"
+    mode: manual
+
+  - id: list
+    title: "List Files"
+    description: |
+      ## List Files
+      Shows the contents of the repository root.
+    commands:
+      - "ls -la"
+    mode: manual
+    allow_skip: true

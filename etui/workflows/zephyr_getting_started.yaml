@@ -1,0 +1,132 @@
+name: "Zephyr Getting Started"
+description: >
+  Set up a Zephyr development environment on Linux/Ubuntu and build the
+  blinky sample, following docs.zephyrproject.org getting started guide.
+version: "1.0"
+variables:
+  # Override BOARD before running the build/flash steps.
+  # Use a real board name (e.g. nrf52840dk/nrf52840) or a QEMU target.
+  BOARD: "qemu_x86"
+
+steps:
+  - id: update_os
+    title: "Update OS"
+    description: |
+      ## 1. Update the OS
+      Refresh the apt package index and upgrade installed packages.
+      Requires `sudo`; you may be prompted for your password in the terminal.
+    commands:
+      - "sudo apt update"
+      - "sudo apt upgrade -y"
+    mode: manual
+    confirm: true
+    allow_skip: true
+    on_failure: prompt
+    timeout: 1200
+
+  - id: install_deps
+    title: "Install Deps"
+    description: |
+      ## 2. Install dependencies
+      Install the main host tools required to build Zephyr (git, cmake,
+      ninja, device-tree-compiler, Python venv, toolchain helpers, …).
+    commands:
+      - >
+        sudo apt install --no-install-recommends -y git cmake ninja-build gperf
+        ccache dfu-util device-tree-compiler wget python3-dev python3-venv python3-tk
+        xz-utils file make gcc gcc-multilib g++-multilib libsdl2-dev libmagic1
+    mode: manual
+    confirm: true
+    on_failure: stop
+    timeout: 1200
+
+  - id: verify_versions
+    title: "Verify Tools"
+    description: |
+      ## Verify minimum versions
+      Confirm CMake, Python, and the device-tree compiler are present and
+      meet Zephyr's minimum required versions.
+    commands:
+      - "cmake --version"
+      - "python3 --version"
+      - "dtc --version"
+    mode: auto
+    on_failure: prompt
+
+  - id: venv_west
+    title: "Venv + West"
+    description: |
+      ## 3. Create a virtual environment and install west
+      Creates `~/zephyrproject/.venv` and installs the `west` meta-tool into
+      it. Subsequent steps activate this venv inside each command.
+    commands:
+      - "python3 -m venv $HOME/zephyrproject/.venv"
+      - ". $HOME/zephyrproject/.venv/bin/activate && pip install --upgrade pip west"
+    mode: manual
+    on_failure: stop
+    timeout: 600
+
+  - id: get_source
+    title: "Get Source"
+    description: |
+      ## 4. Get the Zephyr source code
+      Initialise the west workspace and fetch all repositories. The
+      `west update` step downloads the full Zephyr tree and can take a while.
+    commands:
+      - ". $HOME/zephyrproject/.venv/bin/activate && west init $HOME/zephyrproject"
+      - ". $HOME/zephyrproject/.venv/bin/activate && cd $HOME/zephyrproject && west update"
+    mode: manual
+    on_failure: prompt
+    timeout: 3600
+
+  - id: export_packages
+    title: "Export + Pip"
+    description: |
+      ## 5. Export the CMake package and install Python dependencies
+      Registers the Zephyr CMake package and installs the Python modules
+      required by the build system.
+    commands:
+      - ". $HOME/zephyrproject/.venv/bin/activate && cd $HOME/zephyrproject && west zephyr-export"
+      - ". $HOME/zephyrproject/.venv/bin/activate && cd $HOME/zephyrproject && west packages pip --install"
+    mode: manual
+    on_failure: stop
+    timeout: 1200
+
+  - id: install_sdk
+    title: "Install SDK"
+    description: |
+      ## 6. Install the Zephyr SDK
+      Downloads and installs the Zephyr SDK (toolchains). This is a large
+      download and may take a long time.
+    commands:
+      - ". $HOME/zephyrproject/.venv/bin/activate && cd $HOME/zephyrproject/zephyr && west sdk install"
+    mode: manual
+    on_failure: prompt
+    timeout: 3600
+
+  - id: build_blinky
+    title: "Build Blinky"
+    description: |
+      ## 7. Build the blinky sample
+      Builds `samples/basic/blinky` for the board named by the `$BOARD`
+      workflow variable (default `qemu_x86`). Override `BOARD` for real
+      hardware, e.g. `nrf52840dk/nrf52840`. Run `west boards` to list targets.
+    commands:
+      - ". $HOME/zephyrproject/.venv/bin/activate && cd $HOME/zephyrproject/zephyr && west build -p always -b $BOARD samples/basic/blinky"
+    mode: manual
+    on_failure: stop
+    timeout: 1800
+
+  - id: flash
+    title: "Flash"
+    description: |
+      ## 8. Flash the sample
+      Flashes the built image to the connected board. Skip this step when
+      building for a QEMU target (use `west build -t run` instead).
+    commands:
+      - ". $HOME/zephyrproject/.venv/bin/activate && cd $HOME/zephyrproject/zephyr && west flash"
+    mode: manual
+    confirm: true
+    allow_skip: true
+    on_failure: prompt
+    timeout: 600

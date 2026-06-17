@@ -30,12 +30,12 @@ from textual.worker import Worker, WorkerCancelled
 
 if __package__:
     from ..workflow.engine import ICONS, StepState, WorkflowEngine
-    from ..workflow.loader import WorkflowMeta, list_workflows, load
+    from ..workflow.loader import WorkflowMeta, builtin_dir, list_workflows, load
     from ..workflow.safety import DenylistChecker
     from ..workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
 else:  # pragma: no cover - fallback for non-package execution
     from workflow.engine import ICONS, StepState, WorkflowEngine
-    from workflow.loader import WorkflowMeta, list_workflows, load
+    from workflow.loader import WorkflowMeta, builtin_dir, list_workflows, load
     from workflow.safety import DenylistChecker
     from workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
 
@@ -222,6 +222,7 @@ class WorkflowTab(Vertical):
         if self.repo_path is not None:
             dirs.append(self.repo_path / ".etui" / "workflows")
         dirs.append(Path.home() / ".etui" / "workflows")
+        dirs.append(builtin_dir())  # workflows bundled with the package
         return dirs
 
     def _scan_workflows(self) -> None:

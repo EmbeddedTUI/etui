@@ -9,7 +9,7 @@ from .schema import (
     WorkflowValidationError,
     resolve,
 )
-from .loader import WorkflowMeta, list_workflows, load
+from .loader import WorkflowMeta, builtin_dir, list_workflows, load
 from .engine import (
     WorkflowEngine,
     StepState,
@@ -29,6 +29,7 @@ __all__ = [
     "WorkflowValidationError",
     "resolve",
     "WorkflowMeta",
+    "builtin_dir",
     "list_workflows",
     "load",
     "WorkflowEngine",

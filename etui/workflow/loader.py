@@ -13,6 +13,11 @@ import yaml
 from .schema import Workflow, WorkflowValidationError, build_workflow
 
 
+def builtin_dir() -> Path:
+    """Directory of workflow YAML files bundled with the etui package."""
+    return Path(__file__).resolve().parent.parent / "workflows"
+
+
 def load(path: Path) -> Workflow:
     """Read, parse, and validate a workflow YAML file.
 
