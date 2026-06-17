@@ -162,6 +162,24 @@ class TabTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 tab._resolve_cwd(outside)
 
+    def test_prepare_sudo_no_password(self) -> None:
+        tab = WorkflowTab()
+        self.assertEqual(tab._prepare_sudo("sudo apt update"), ("sudo apt update", None))
+
+    def test_prepare_sudo_rewrites_to_stdin(self) -> None:
+        import os
+
+        if os.name != "posix":
+            self.skipTest("sudo -S handling is POSIX-only")
+        tab = WorkflowTab()
+        tab._sudo_password = "pw"
+        cmd, stdin_data = tab._prepare_sudo("sudo apt update && sudo apt install -y git")
+        self.assertEqual(cmd, "sudo -S -p '' apt update && sudo -S -p '' apt install -y git")
+        # one password line per sudo invocation
+        self.assertEqual(stdin_data, b"pw\npw\n")
+        # non-sudo command is untouched
+        self.assertEqual(tab._prepare_sudo("echo hi"), ("echo hi", None))
+
     def test_workflow_dirs_includes_repo_home_and_builtin(self) -> None:
         from etui.workflow.loader import builtin_dir
 

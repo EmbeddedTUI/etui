@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
+    Input,
     Label,
     ListItem,
     ListView,
@@ -83,6 +85,61 @@ class ConfirmDialog(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "btn-workflow-confirm-yes")
+
+
+class PasswordDialog(ModalScreen[str | None]):
+    """Masked prompt used to collect a sudo password for a workflow step."""
+
+    DEFAULT_CSS = """
+    PasswordDialog {
+        align: center middle;
+        background: rgba(0, 0, 0, 0.5);
+    }
+
+    #workflow-pw-dialog {
+        width: 60;
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border: thick $accent;
+    }
+
+    #workflow-pw-dialog Label {
+        margin-bottom: 1;
+    }
+
+    #workflow-pw-dialog Button {
+        margin-right: 2;
+    }
+    """
+
+    def __init__(self, prompt: str) -> None:
+        super().__init__()
+        self.prompt = prompt
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="workflow-pw-dialog"):
+            yield Label(self.prompt)
+            yield Input(password=True, id="workflow-pw-input")
+            with Horizontal():
+                yield Button("OK", id="btn-workflow-pw-ok", variant="primary")
+                yield Button("Cancel", id="btn-workflow-pw-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#workflow-pw-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-workflow-pw-ok":
+            self.dismiss(self.query_one("#workflow-pw-input", Input).value)
+        else:
+            self.dismiss(None)
+
+
+# Matches a `sudo` command word not already given an askpass/non-interactive flag.
+_SUDO_RE = re.compile(r"\bsudo\b(?!\s+-[AnKk])")
 
 
 class WorkflowTab(Vertical):
@@ -170,6 +227,8 @@ class WorkflowTab(Vertical):
         self._active_subprocess: asyncio.subprocess.Process | None = None
         self._operation_worker: Worker[None] | None = None
         self._started_at: float = 0.0
+        # sudo support: password cached for the session, fed to `sudo -S`.
+        self._sudo_password: str | None = None
 
     # ------------------------------------------------------------------ UI
     def compose(self) -> ComposeResult:
@@ -413,6 +472,19 @@ class WorkflowTab(Vertical):
                 self._sync_controls()
                 return
 
+        # If any command needs sudo, collect a password up front.
+        if any(_SUDO_RE.search(c) for c in resolved_cmds) and self._sudo_password is None:
+            pw = await self.app.push_screen_wait(
+                PasswordDialog("This step runs sudo. Enter your password:")
+            )
+            if pw is None:
+                log.write("[yellow]Step cancelled (no password).[/yellow]")
+                self.busy = False
+                self.run_all = False
+                self._sync_controls()
+                return
+            self._sudo_password = pw
+
         engine.mark_running()
         self._refresh_step_labels()
         self._update_status_for_current()
@@ -423,8 +495,14 @@ class WorkflowTab(Vertical):
         try:
             for cmd in resolved_cmds:
                 log.write(f"[bold cyan]$ {escape(cmd)}[/bold cyan]")
-                ret = await self._capture_command(cmd, cwd=workdir, timeout=timeout, log=log)
+                run_cmd, stdin_data = self._prepare_sudo(cmd)
+                ret = await self._capture_command(
+                    run_cmd, cwd=workdir, timeout=timeout, log=log, stdin_data=stdin_data
+                )
                 if ret != 0:
+                    # A bad sudo password should not be cached for later steps.
+                    if stdin_data is not None:
+                        self._sudo_password = None
                     log.write(f"[red]Command failed (exit {ret}).[/red]")
                     failed = True
                     break
@@ -504,14 +582,50 @@ class WorkflowTab(Vertical):
         if status is not None:
             status.update(f"Complete — {done} done, {failed} failed, {skipped} skipped")
 
-    async def _capture_command(self, cmd: str, *, cwd: Path, timeout: int, log: RichLog) -> int:
+    def _prepare_sudo(self, cmd: str) -> tuple[str, bytes | None]:
+        """Rewrite ``sudo`` to read the password from stdin and return the
+        bytes to feed it.
+
+        Returns the original command and ``None`` when no sudo is present or no
+        password has been collected. Uses ``sudo -S`` (read from stdin) with an
+        empty prompt; works with both classic sudo and sudo-rs.
+        """
+        if os.name != "posix" or self._sudo_password is None:
+            return cmd, None
+        count = len(_SUDO_RE.findall(cmd))
+        if count == 0:
+            return cmd, None
+        run_cmd = _SUDO_RE.sub("sudo -S -p ''", cmd)
+        # Feed one password line per sudo invocation; cached calls simply
+        # ignore the extra lines.
+        stdin_data = (self._sudo_password + "\n").encode() * count
+        return run_cmd, stdin_data
+
+    async def _capture_command(
+        self,
+        cmd: str,
+        *,
+        cwd: Path,
+        timeout: int,
+        log: RichLog,
+        stdin_data: bytes | None = None,
+    ) -> int:
         process = await asyncio.create_subprocess_shell(
             cmd,
             cwd=str(cwd),
+            stdin=asyncio.subprocess.PIPE if stdin_data is not None else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=(os.name == "posix"),
         )
+        if stdin_data is not None and process.stdin is not None:
+            try:
+                process.stdin.write(stdin_data)
+                await process.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                process.stdin.close()
         self._active_subprocess = process
 
         async def pump() -> None:
