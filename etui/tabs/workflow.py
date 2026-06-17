@@ -249,6 +249,7 @@ class WorkflowTab(Vertical):
                 yield Static("", id="workflow-status-bar")
         with Horizontal(id="workflow-action-bar"):
             yield Button("Run", id="btn-workflow-run", disabled=True)
+            yield Button("Console", id="btn-workflow-console", disabled=True)
             yield Button("Skip", id="btn-workflow-skip", disabled=True)
             yield Button("Abort", id="btn-workflow-abort", variant="warning", disabled=True)
             yield Button("Prev", id="btn-workflow-prev", disabled=True)
@@ -391,6 +392,7 @@ class WorkflowTab(Vertical):
         try:
             run_all_btn = self.query_one("#btn-workflow-run-all", Button)
             run_btn = self.query_one("#btn-workflow-run", Button)
+            console_btn = self.query_one("#btn-workflow-console", Button)
             skip_btn = self.query_one("#btn-workflow-skip", Button)
             abort_btn = self.query_one("#btn-workflow-abort", Button)
             prev_btn = self.query_one("#btn-workflow-prev", Button)
@@ -406,9 +408,14 @@ class WorkflowTab(Vertical):
         if not has_engine or self.busy:
             run_all_btn.disabled = self.busy or not has_engine
             run_btn.disabled = True
+            console_btn.disabled = True
             skip_btn.disabled = True
             prev_btn.disabled = True
             return
+
+        # "Console" sends the currently viewed step's commands to the Console
+        # tab — available for any loaded step with commands.
+        console_btn.disabled = not bool(self.engine.current_step().commands)
 
         engine = self.engine
         complete = engine.complete
@@ -690,6 +697,40 @@ class WorkflowTab(Vertical):
                 return
             await process.wait()
 
+    def _send_step_to_console(self) -> None:
+        """Send the currently viewed step's commands to the Console tab.
+
+        Useful when a step needs an interactive shell (e.g. to answer a sudo
+        or apt prompt) instead of the wizard's non-interactive runner.
+        """
+        if self.engine is None:
+            return
+        step = self.engine.current_step()
+        if not step.commands:
+            return
+        resolved = [resolve(c, self.engine.workflow.variables) for c in step.commands]
+        combined = " && ".join(resolved)
+        try:
+            from textual.widgets import TabbedContent
+
+            if __package__:
+                from .console import ConsoleTab
+            else:  # pragma: no cover
+                from tabs.console import ConsoleTab
+
+            console = self.app.query_one(ConsoleTab)
+            self.app.query_one(TabbedContent).active = "console"
+            self.app.run_worker(
+                console.run_command(combined),
+                name="console-command",
+                group="console",
+                exit_on_error=False,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            self.query_one("#workflow-step-output", RichLog).write(
+                f"[red]Could not send to console: {escape(str(exc))}[/red]"
+            )
+
     # ------------------------------------------------------------ events
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if self.engine is None or event.item.id is None:
@@ -717,7 +758,9 @@ class WorkflowTab(Vertical):
             return
         if self.busy or self.engine is None:
             return
-        if bid == "btn-workflow-run":
+        if bid == "btn-workflow-console":
+            self._send_step_to_console()
+        elif bid == "btn-workflow-run":
             self._started_at = self._started_at or time.monotonic()
             self._start_operation(self._run_active_step(), "workflow-run")
         elif bid == "btn-workflow-run-all":
