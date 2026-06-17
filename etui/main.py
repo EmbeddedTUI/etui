@@ -27,6 +27,7 @@ if __package__:
     from .tabs.cmake import CMakeTab
     from .tabs.tools import ToolsTab
     from .tabs.settings import SettingsTab
+    from .tabs.workflow import WorkflowTab
     from .settings import SettingsManager
 else:
     from tabs.help import HelpTab, OpenDocFile
@@ -43,6 +44,7 @@ else:
     from tabs.cmake import CMakeTab
     from tabs.tools import ToolsTab
     from tabs.settings import SettingsTab
+    from tabs.workflow import WorkflowTab
     from settings import SettingsManager
 
 class CommandMessage(Message):
@@ -176,6 +178,13 @@ class EtuiApp(App):
         except Exception:
             pass
 
+        # 7. Update Workflow tab
+        try:
+            workflow_tab = self.query_one(WorkflowTab)
+            self.run_worker(workflow_tab.change_repository(Path(path)))
+        except Exception:
+            pass
+
     async def on_mount(self) -> None:
         probe_tab = self.query_one(ProbeTab)
         probe_tab.apply_settings(self.settings_manager.settings["probe"])
@@ -220,6 +229,8 @@ class EtuiApp(App):
                 yield GitHubTab()
             with TabPane("CMake", id="cmake"):
                 yield CMakeTab()
+            with TabPane("Workflow", id="workflow"):
+                yield WorkflowTab()
             with TabPane("Serial", id="serial"):
                 yield SerialTab()
             with TabPane("Probe", id="probe"):
@@ -337,6 +348,11 @@ class EtuiApp(App):
                 self.query_one("#txt-cmake-build").focus()
             except Exception:
                 pass
+        elif pane_id == "workflow":
+            try:
+                self.query_one("#workflow-select").focus()
+            except Exception:
+                pass
         elif pane_id == "tools":
             try:
                 self.query_one("#tools-table").focus()
@@ -396,6 +412,18 @@ class EtuiApp(App):
                     self.run_worker(
                         cmake_tab.cancel_active_operation(),
                         name="cancel-cmake-operation",
+                        exit_on_error=False,
+                    )
+            except Exception:
+                pass
+
+        if old_pane_id == "workflow" and pane_id != "workflow":
+            try:
+                workflow_tab = self.query_one(WorkflowTab)
+                if workflow_tab.busy:
+                    self.run_worker(
+                        workflow_tab.cancel_active_operation(),
+                        name="cancel-workflow-operation",
                         exit_on_error=False,
                     )
             except Exception:

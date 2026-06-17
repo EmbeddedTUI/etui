@@ -24,6 +24,7 @@ TAB_IDS = [
     "git",
     "github",
     "cmake",
+    "workflow",
     "serial",
     "probe",
     "lldb",
@@ -102,9 +103,17 @@ class AboutTab(Vertical):
         padding: 1 2;
     }
     AboutTab #about-info {
-        width: auto;
+        width: 54;
         height: auto;
         align: center middle;
+    }
+    AboutTab #about-motto {
+        color: $accent;
+        text-style: bold italic;
+        background: $accent 15%;
+        padding: 0 3;
+        margin: 1 0;
+        width: auto;
     }
     AboutTab Static {
         text-align: center;
@@ -147,7 +156,7 @@ class AboutTab(Vertical):
             with Center():
                 with Vertical(id="about-info"):
                     yield Static("[bold]etui[/bold] — Embedded TUI")
-                    yield Static("[italic]Per aspera ad astra[/italic]")
+                    yield Static("“Per aspera ad astra”", id="about-motto")
                     yield Static(COPYRIGHT)
                     yield Static("")
                     yield Static(
