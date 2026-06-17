@@ -14,7 +14,6 @@ from pathlib import Path
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
@@ -441,7 +440,18 @@ class WorkflowTab(Vertical):
             policy = engine.step_failed(ret)
             if policy == "prompt":
                 self.run_all = False
-                self.post_message(self.PromptDecision(step.id, ret))
+                cont = await self.app.push_screen_wait(
+                    ConfirmDialog(
+                        "Step failed — continue anyway?",
+                        [f"Step '{step.id}' failed (exit {ret})."],
+                        dangerous=False,
+                    )
+                )
+                engine.resolve_prompt(cont)
+                if cont:
+                    log.write("[yellow]Continuing after failure.[/yellow]")
+                else:
+                    log.write("[red]Workflow stopped due to failure.[/red]")
             elif policy == "stop":
                 self.run_all = False
                 log.write("[red]Workflow stopped due to failure.[/red]")
@@ -562,30 +572,6 @@ class WorkflowTab(Vertical):
             except ProcessLookupError:
                 return
             await process.wait()
-
-    # --------------------------------------------------------- prompt flow
-    class PromptDecision(Message):
-        def __init__(self, step_id: str, exit_code: int) -> None:
-            super().__init__()
-            self.step_id = step_id
-            self.exit_code = exit_code
-
-    async def on_workflow_tab_prompt_decision(self, message: "WorkflowTab.PromptDecision") -> None:
-        log = self.query_one("#workflow-step-output", RichLog)
-        cont = await self.app.push_screen_wait(
-            ConfirmDialog(
-                "Step failed — continue anyway?",
-                [f"Step '{message.step_id}' failed (exit {message.exit_code})."],
-                dangerous=False,
-            )
-        )
-        if self.engine is not None:
-            self.engine.resolve_prompt(cont)
-            if cont:
-                log.write("[yellow]Continuing after failure.[/yellow]")
-            else:
-                log.write("[red]Workflow stopped due to failure.[/red]")
-            self._after_step_update()
 
     # ------------------------------------------------------------ events
     def on_list_view_selected(self, event: ListView.Selected) -> None:
