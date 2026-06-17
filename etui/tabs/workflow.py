@@ -247,12 +247,12 @@ class WorkflowTab(Vertical):
             )
 
     # -------------------------------------------------------- load / select
-    def on_select_changed(self, event: Select.Changed) -> None:
+    async def on_select_changed(self, event: Select.Changed) -> None:
         if event.value is Select.BLANK:
             return
-        self.load_workflow(Path(str(event.value)))
+        await self.load_workflow(Path(str(event.value)))
 
-    def load_workflow(self, path: Path) -> bool:
+    async def load_workflow(self, path: Path) -> bool:
         log = self.query_one("#workflow-step-output", RichLog)
         log.clear()
         try:
@@ -265,7 +265,7 @@ class WorkflowTab(Vertical):
             return False
         self.engine = WorkflowEngine(self.workflow)
         self.run_all = False
-        self._render_steps()
+        await self._render_steps()
         self._show_step(self.engine.current_index)
         self._sync_controls()
         log.write(f"[green]Loaded workflow:[/green] {escape(self.workflow.name)}")
@@ -278,14 +278,14 @@ class WorkflowTab(Vertical):
         except Exception:
             return None
 
-    def _render_steps(self) -> None:
+    async def _render_steps(self) -> None:
         if self.engine is None:
             return
         view = self.query_one("#workflow-steps-view", ListView)
-        view.clear()
+        await view.clear()
         for i, step in enumerate(self.engine.workflow.steps):
             icon = ICONS[self.engine.state_at(i)]
-            view.append(ListItem(Label(f"{icon} {step.label}"), id=f"wf-step-{i}"))
+            await view.append(ListItem(Label(f"{icon} {step.label}"), id=f"wf-step-{i}"))
 
     def _refresh_step_labels(self) -> None:
         if self.engine is None:
@@ -610,7 +610,7 @@ class WorkflowTab(Vertical):
             self._scan_workflows()
             path = self._current_path()
             if path is not None:
-                self.load_workflow(path)
+                await self.load_workflow(path)
             return
         if self.busy or self.engine is None:
             return
