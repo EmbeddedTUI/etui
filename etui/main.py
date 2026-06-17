@@ -255,7 +255,12 @@ class EtuiApp(App):
     # dispatch commands based on the first character
     # if "/" it is a built-in command otherwise it is shell command  
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        #self.notify(f"on_input_submitted {event.value}")
+        # Only the main command input drives command dispatch. Submissions from
+        # any other Input (tab search boxes, the workflow password dialog, …)
+        # must never be treated as shell commands — that would leak their value
+        # (e.g. a sudo password) into the console in plaintext.
+        if event.input.id != "main-input":
+            return
         command = event.value.strip()
         if not command:
             return

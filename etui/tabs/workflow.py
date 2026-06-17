@@ -129,6 +129,9 @@ class PasswordDialog(ModalScreen[str | None]):
         self.query_one("#workflow-pw-input", Input).focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Stop the event so it does not bubble to the app-level handler, which
+        # would otherwise run the password as a console command.
+        event.stop()
         self.dismiss(event.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
