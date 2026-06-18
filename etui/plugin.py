@@ -13,11 +13,28 @@ if TYPE_CHECKING:
     from textual.widget import Widget
 
 if __package__:
-    from .bus import BusMixin
+    from .bus import BusMixin, MessageBus, NoProvider, RpcError, RpcTimeout
+    from . import bus_contract
 else:
-    from bus import BusMixin
+    from bus import BusMixin, MessageBus, NoProvider, RpcError, RpcTimeout
+    import bus_contract
 
 API_VERSION = 1  # MAJOR contract version; bump on breaking change
+
+# Public extension API. Plugins import everything they need from etui.plugin.
+__all__ = [
+    "API_VERSION",
+    "TabSpec",
+    "EtuiTabPlugin",
+    "CancelOnLeaveMixin",
+    # Re-exported bus primitives so plugins have one import root.
+    "BusMixin",
+    "MessageBus",
+    "NoProvider",
+    "RpcError",
+    "RpcTimeout",
+    "bus_contract",
+]
 
 
 @dataclass(frozen=True)
@@ -50,15 +67,28 @@ class CancelOnLeaveMixin:
 
     The widget must expose ``busy: bool`` and an async ``cancel_active_operation()``;
     override ``survives_leave()`` to keep detached work alive.
+
+    The mixin's ``on_mount``/``on_unmount`` call ``super()`` so they cooperate with
+    the widget's own handlers under the MRO. List the mixin before the widget base
+    (e.g. ``class MyTab(CancelOnLeaveMixin, BusMixin, Vertical)``); if the widget
+    overrides ``on_mount``/``on_unmount``, it must call ``super()`` too.
     """
 
     def on_mount(self) -> None:
         # Subscribe to the tab.deactivated event emitted by the app
         self._off_leave = self.bus.subscribe("tab.deactivated", self._on_tab_left)
+        # Cooperate with any other on_mount in the MRO. Textual handlers are
+        # optional (Widget has none), so only chain if one actually exists.
+        nxt = getattr(super(), "on_mount", None)
+        if nxt is not None:
+            nxt()
 
     def on_unmount(self) -> None:
         if hasattr(self, "_off_leave"):
             self._off_leave()
+        nxt = getattr(super(), "on_unmount", None)
+        if nxt is not None:
+            nxt()
 
     def survives_leave(self) -> bool:
         """Override this to return True if the active operation should survive switching tabs."""
