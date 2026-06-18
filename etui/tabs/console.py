@@ -34,10 +34,18 @@ import pyte
 
 if __package__:
     from ..bus import BusMixin
-    from ..bus_contract import SVC_CONSOLE_RUN, SVC_NAV_ACTIVATE
+    from ..bus_contract import (
+        SVC_CONSOLE_FORCE_COMPLETE,
+        SVC_CONSOLE_RUN,
+        SVC_NAV_ACTIVATE,
+    )
 else:  # pragma: no cover - script-mode import
     from bus import BusMixin
-    from bus_contract import SVC_CONSOLE_RUN, SVC_NAV_ACTIVATE
+    from bus_contract import (
+        SVC_CONSOLE_FORCE_COMPLETE,
+        SVC_CONSOLE_RUN,
+        SVC_NAV_ACTIVATE,
+    )
 
 
 # Terminal escape sequences that can interleave with shell output (OSC title /
@@ -390,15 +398,30 @@ class ConsoleTab(BusMixin, Vertical):
     def __init__(self) -> None:
         super().__init__(id="console-tab")
         self._cwd = Path.cwd()
-        self._unprovide = None
+        self._disposers = []
 
     def on_mount(self) -> None:
-        self._unprovide = self.bus.provide(SVC_CONSOLE_RUN, self._svc_run)
+        self._disposers = [
+            self.bus.provide(SVC_CONSOLE_RUN, self._svc_run),
+            self.bus.provide(SVC_CONSOLE_FORCE_COMPLETE, self._svc_force_complete),
+        ]
 
     def on_unmount(self) -> None:
-        if self._unprovide is not None:
-            self._unprovide()
-            self._unprovide = None
+        for dispose in self._disposers:
+            dispose()
+        self._disposers = []
+
+    async def _svc_force_complete(self, exit_code: int = 0) -> None:
+        """Bus service ``console.force_complete``: manually resolve the command
+        the terminal is currently waiting on (the Sync override)."""
+        self.force_complete(exit_code)
+
+    def force_complete(self, exit_code: int = 0) -> None:
+        try:
+            term = self.query_one(TerminalWidget)
+        except Exception:
+            return
+        term._resolve_pending_commands(exit_code)
 
     async def _svc_run(self, command: str, timeout: float | None = None) -> int:
         """Bus service ``console.run``: surface the console and run ``command``,
@@ -432,11 +455,7 @@ class ConsoleTab(BusMixin, Vertical):
         if event.button.id != "btn-console-sync":
             return
         event.stop()
-        try:
-            term = self.query_one(TerminalWidget)
-        except Exception:
-            return
-        term._resolve_pending_commands(0)
+        self.force_complete(0)
 
     @property
     def cwd(self) -> Path:

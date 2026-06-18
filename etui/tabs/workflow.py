@@ -34,15 +34,15 @@ if __package__:
     from ..workflow.loader import WorkflowMeta, builtin_dir, list_workflows, load
     from ..workflow.safety import DenylistChecker
     from ..workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
-    from ..bus import BusMixin, NoProvider
-    from ..bus_contract import SVC_CONSOLE_RUN
+    from ..bus import BusMixin, NoProvider, RpcError
+    from ..bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN
 else:  # pragma: no cover - fallback for non-package execution
     from workflow.engine import ICONS, StepState, WorkflowEngine
     from workflow.loader import WorkflowMeta, builtin_dir, list_workflows, load
     from workflow.safety import DenylistChecker
     from workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
-    from bus import BusMixin, NoProvider
-    from bus_contract import SVC_CONSOLE_RUN
+    from bus import BusMixin, NoProvider, RpcError
+    from bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN
 
 
 class ConfirmDialog(ModalScreen[bool]):
@@ -819,9 +819,8 @@ class WorkflowTab(BusMixin, Vertical):
             return
         if bid == "btn-workflow-sync":
             try:
-                term = self.app.query_one("#console-terminal")
-                term._resolve_pending_commands(0)
-            except Exception as exc:  # pragma: no cover - defensive
+                await self.bus.call(SVC_CONSOLE_FORCE_COMPLETE, exit_code=0)
+            except RpcError as exc:
                 self.query_one("#workflow-step-output", RichLog).write(
                     f"[red]Sync failed: {escape(str(exc))}[/red]"
                 )

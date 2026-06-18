@@ -17,6 +17,9 @@ TOPIC_REPO_CHANGED = "repo.changed"        # payload: RepoChanged
 # ---- Services (imperative verbs) -----------------------------------------
 # console.run(command: str, timeout: float | None = None) -> int
 SVC_CONSOLE_RUN = "console.run"
+# console.force_complete(exit_code: int = 0) -> None
+# Manually resolve the command the console is currently waiting on (Sync override).
+SVC_CONSOLE_FORCE_COMPLETE = "console.force_complete"
 # nav.activate_tab(tab_id: str) -> None
 SVC_NAV_ACTIVATE = "nav.activate_tab"
 

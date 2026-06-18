@@ -267,6 +267,29 @@ class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(term._pending_commands), 0)
             self.assertEqual(await run_task, 0)
 
+    async def test_force_complete_service_resolves_via_bus(self) -> None:
+        """The console.force_complete bus service resolves a hung command."""
+        import asyncio
+        from etui.bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN
+
+        app = WorkflowConsoleTestApp()
+        async with app.run_test() as pilot:
+            term = app.query_one("#console-terminal")
+            await pilot.pause()
+            self.assertTrue(app.bus.has(SVC_CONSOLE_RUN))
+            self.assertTrue(app.bus.has(SVC_CONSOLE_FORCE_COMPLETE))
+
+            run_task = asyncio.ensure_future(term.run_command("sleep 60"))
+            for _ in range(20):
+                await pilot.pause()
+                if term._pending_commands:
+                    break
+            self.assertEqual(len(term._pending_commands), 1)
+
+            await app.bus.call(SVC_CONSOLE_FORCE_COMPLETE, exit_code=0)
+            self.assertEqual(len(term._pending_commands), 0)
+            self.assertEqual(await run_task, 0)
+
     async def test_console_force_complete_button_resolves(self) -> None:
         """The Console tab's own Force Complete button resolves a hung command."""
         import asyncio
