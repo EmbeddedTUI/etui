@@ -96,5 +96,22 @@ class BusRpcTests(unittest.IsolatedAsyncioTestCase):
             await bus.call("bad")
 
 
+class BusDebugLoggingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_emit_and_call_are_logged_at_debug(self) -> None:
+        bus = MessageBus()
+
+        async def provider(command, timeout=None):
+            return 0
+
+        bus.provide("svc.x", provider)
+        with self.assertLogs("etui.bus", level="DEBUG") as cm:
+            bus.emit("topic.y", 1)
+            await bus.call("svc.x", command="go")
+        joined = "\n".join(cm.output)
+        self.assertIn("emit topic=topic.y", joined)
+        self.assertIn("call service=svc.x", joined)
+        self.assertIn("-> 0", joined)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Pawel Wodnicki
 # Copyright (c) 2026 32bitmico LLC
 
+import os
 import sys
 from pathlib import Path
 
@@ -479,7 +480,40 @@ class EtuiApp(App):
 
     
 
+def _setup_debug_logging() -> Path:
+    """Route ``etui`` loggers (incl. the message bus) to a debug file.
+
+    The app is a full-screen TUI, so debug output must not go to stdout/stderr.
+    Returns the log file path. Idempotent.
+    """
+    import logging
+
+    log_path = Path(os.environ.get("ETUI_DEBUG_LOG", "etui-debug.log")).expanduser()
+    logger = logging.getLogger("etui")
+    logger.setLevel(logging.DEBUG)
+    already = any(
+        isinstance(h, logging.FileHandler)
+        and getattr(h, "_etui_debug", False)
+        for h in logger.handlers
+    )
+    if not already:
+        handler = logging.FileHandler(log_path)
+        handler._etui_debug = True  # type: ignore[attr-defined]
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+        )
+        logger.addHandler(handler)
+        logger.propagate = False
+    logger.debug("debug logging enabled -> %s", log_path)
+    return log_path
+
+
 def main():
+    if "--debug" in sys.argv:
+        sys.argv = [a for a in sys.argv if a != "--debug"]
+        path = _setup_debug_logging()
+        print(f"[etui] debug logging -> {path}")
+
     if len(sys.argv) >= 3 and sys.argv[1] == "--etui-xonsh-command":
         from xonsh.main import main as xonsh_main
 

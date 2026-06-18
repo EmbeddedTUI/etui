@@ -25,6 +25,11 @@ from typing import Any, Awaitable, Callable
 
 log = logging.getLogger("etui.bus")
 
+
+def _name(fn: Callable) -> str:
+    """Best-effort readable name for a handler/provider, for debug logs."""
+    return getattr(fn, "__qualname__", None) or getattr(fn, "__name__", None) or repr(fn)
+
 EventHandler = Callable[["Event"], "Awaitable[None] | None"]
 RpcProvider = Callable[..., Awaitable[Any]]
 Disposer = Callable[[], None]
@@ -65,6 +70,7 @@ class MessageBus:
         Returns a disposer; call it (typically in ``on_unmount``) to unsubscribe.
         """
         self._subs.setdefault(topic, []).append(handler)
+        log.debug("subscribe topic=%s handler=%s", topic, _name(handler))
 
         def _dispose() -> None:
             handlers = self._subs.get(topic)
@@ -82,10 +88,16 @@ class MessageBus:
         are logged so one bad subscriber cannot break the publisher.
         """
         event = Event(topic, payload, source)
+        matched = 0
         for pattern, handlers in list(self._subs.items()):
             if pattern == topic or fnmatch.fnmatchcase(topic, pattern):
                 for handler in list(handlers):
+                    matched += 1
                     self._dispatch(handler, event)
+        log.debug(
+            "emit topic=%s source=%s subscribers=%d payload=%r",
+            topic, source, matched, payload,
+        )
 
     def _dispatch(self, handler: EventHandler, event: Event) -> None:
         try:
@@ -119,10 +131,12 @@ class MessageBus:
         if service in self._services:
             raise RpcError(f"service {service!r} already provided")
         self._services[service] = provider
+        log.debug("provide service=%s provider=%s", service, _name(provider))
 
         def _dispose() -> None:
             if self._services.get(service) is provider:
                 self._services.pop(service, None)
+                log.debug("deregister service=%s", service)
 
         return _dispose
 
@@ -138,14 +152,23 @@ class MessageBus:
         """
         provider = self._services.get(service)
         if provider is None:
+            log.debug("call service=%s -> NoProvider", service)
             raise NoProvider(service)
+        log.debug("call service=%s args=%r timeout=%s", service, kwargs, timeout)
         call = provider(**kwargs)
-        if timeout is None:
-            return await call
         try:
-            return await asyncio.wait_for(call, timeout)
+            if timeout is None:
+                result = await call
+            else:
+                result = await asyncio.wait_for(call, timeout)
         except asyncio.TimeoutError as exc:
+            log.debug("call service=%s -> timeout after %ss", service, timeout)
             raise RpcTimeout(service) from exc
+        except Exception as exc:
+            log.debug("call service=%s -> raised %s: %s", service, type(exc).__name__, exc)
+            raise
+        log.debug("call service=%s -> %r", service, result)
+        return result
 
 
 class BusMixin:
