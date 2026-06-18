@@ -29,6 +29,8 @@ if __package__:
     from .tabs.settings import SettingsTab
     from .tabs.workflow import WorkflowTab
     from .settings import SettingsManager
+    from .bus import MessageBus
+    from .bus_contract import SVC_NAV_ACTIVATE
 else:
     from tabs.help import HelpTab, OpenDocFile
     from tabs.about import AboutTab
@@ -46,6 +48,8 @@ else:
     from tabs.settings import SettingsTab
     from tabs.workflow import WorkflowTab
     from settings import SettingsManager
+    from bus import MessageBus
+    from bus_contract import SVC_NAV_ACTIVATE
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -65,6 +69,14 @@ class EtuiApp(App):
         self.tool_registry = ToolRegistry(self)
         self._last_active_tab = "files"
         self.workspace_root = self.load_workspace_root()
+        self.bus = MessageBus()
+        # App-owned services that don't belong to any single tab.
+        self.bus.provide(SVC_NAV_ACTIVATE, self._svc_activate_tab)
+
+    async def _svc_activate_tab(self, tab_id: str) -> None:
+        """Bus service: switch the active tab. Lets tabs request navigation
+        without reaching into TabbedContent themselves."""
+        self.query_one(TabbedContent).active = tab_id
 
 
     CSS = """

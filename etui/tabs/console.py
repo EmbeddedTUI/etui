@@ -32,6 +32,13 @@ if os.name == "posix":
 
 import pyte
 
+if __package__:
+    from ..bus import BusMixin
+    from ..bus_contract import SVC_CONSOLE_RUN, SVC_NAV_ACTIVATE
+else:  # pragma: no cover - script-mode import
+    from bus import BusMixin
+    from bus_contract import SVC_CONSOLE_RUN, SVC_NAV_ACTIVATE
+
 
 # Terminal escape sequences that can interleave with shell output (OSC title /
 # shell-integration sequences, CSI cursor/colour codes, single-char escapes).
@@ -363,7 +370,7 @@ class TerminalWidget(Widget, can_focus=True):
         return None
 
 
-class ConsoleTab(Vertical):
+class ConsoleTab(BusMixin, Vertical):
     """Console tab hosting a true terminal emulator."""
 
     DEFAULT_CSS = """
@@ -383,6 +390,26 @@ class ConsoleTab(Vertical):
     def __init__(self) -> None:
         super().__init__(id="console-tab")
         self._cwd = Path.cwd()
+        self._unprovide = None
+
+    def on_mount(self) -> None:
+        self._unprovide = self.bus.provide(SVC_CONSOLE_RUN, self._svc_run)
+
+    def on_unmount(self) -> None:
+        if self._unprovide is not None:
+            self._unprovide()
+            self._unprovide = None
+
+    async def _svc_run(self, command: str, timeout: float | None = None) -> int:
+        """Bus service ``console.run``: surface the console and run ``command``,
+        awaiting its exit code."""
+        if self.bus.has(SVC_NAV_ACTIVATE):
+            await self.bus.call(SVC_NAV_ACTIVATE, tab_id="console")
+        self.show_sync_button(True)
+        try:
+            return await self.run_command(command)
+        finally:
+            self.show_sync_button(False)
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="console-actionbar"):

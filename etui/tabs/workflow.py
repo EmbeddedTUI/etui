@@ -34,11 +34,15 @@ if __package__:
     from ..workflow.loader import WorkflowMeta, builtin_dir, list_workflows, load
     from ..workflow.safety import DenylistChecker
     from ..workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
+    from ..bus import BusMixin, NoProvider
+    from ..bus_contract import SVC_CONSOLE_RUN
 else:  # pragma: no cover - fallback for non-package execution
     from workflow.engine import ICONS, StepState, WorkflowEngine
     from workflow.loader import WorkflowMeta, builtin_dir, list_workflows, load
     from workflow.safety import DenylistChecker
     from workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
+    from bus import BusMixin, NoProvider
+    from bus_contract import SVC_CONSOLE_RUN
 
 
 class ConfirmDialog(ModalScreen[bool]):
@@ -145,7 +149,7 @@ class PasswordDialog(ModalScreen[str | None]):
 _SUDO_RE = re.compile(r"\bsudo\b(?!\s+-[AnKk])")
 
 
-class WorkflowTab(Vertical):
+class WorkflowTab(BusMixin, Vertical):
     """YAML-defined, multi-step command workflow runner."""
 
     DEFAULT_CSS = """
@@ -725,26 +729,17 @@ class WorkflowTab(Vertical):
             return
         resolved = [resolve(c, self.engine.workflow.variables) for c in step.commands]
         combined = " && ".join(resolved)
-        try:
-            from textual.widgets import TabbedContent
-
-            if __package__:
-                from .console import ConsoleTab
-            else:  # pragma: no cover
-                from tabs.console import ConsoleTab
-
-            console = self.app.query_one(ConsoleTab)
-            self.app.query_one(TabbedContent).active = "console"
-            self._start_operation(
-                self._run_step_in_console(console, combined),
-                name="console-command",
-            )
-        except Exception as exc:  # pragma: no cover - defensive
+        if not self.bus.has(SVC_CONSOLE_RUN):
             self.query_one("#workflow-step-output", RichLog).write(
-                f"[red]Could not send to console: {escape(str(exc))}[/red]"
+                "[red]Console is unavailable.[/red]"
             )
+            return
+        self._start_operation(
+            self._run_step_in_console(combined),
+            name="console-command",
+        )
 
-    async def _run_step_in_console(self, console, combined: str) -> None:
+    async def _run_step_in_console(self, combined: str) -> None:
         engine = self.engine
         if engine is None:
             self.busy = False
@@ -762,17 +757,21 @@ class WorkflowTab(Vertical):
         log.write(f"[bold]── Step: {escape(step.title)} (Console) ──[/bold]")
         log.write(f"[bold cyan]$ {escape(combined)}[/bold cyan]")
 
-        console.show_sync_button(True)
         try:
-            ret = await console.run_command(combined)
+            ret = await self.bus.call(SVC_CONSOLE_RUN, command=combined, timeout=None)
         except asyncio.CancelledError:
             engine.mark_active()
             self._aborted_steps.add(step.id)
             self.run_all = False
             raise
+        except NoProvider:
+            engine.mark_active()
+            log.write("[red]Console is unavailable.[/red]")
+            self.busy = False
+            self._after_step_update()
+            return
         finally:
             self.busy = False
-            console.show_sync_button(False)
 
         if ret != 0:
             policy = engine.step_failed(ret)
