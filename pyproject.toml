@@ -4,14 +4,14 @@ build-backend = "pdm.backend"
 
 [project]
 name = "etui"
-version = "0.2.0"
+version = "0.3.0"
 description = "Terminal-based IDE for embedded firmware development"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [
     { name = "Pawel Wodnicki", email = "hbbrbasic@gmail.com" },
 ]
-keywords = ["embedded", "tui", "debugger", "firmware", "arm", "pyocd", "lldb"]
+keywords = ["embedded", "tui", "debugger", "firmware", "arm","cmake", "git", "github", "debugger", "pyocd", "lldb"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
