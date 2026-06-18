@@ -167,10 +167,10 @@ class WorkflowEngine:
             self._advance()
         # stop: leave FAILED in place; workflow is effectively aborted
 
-    def skip_current(self) -> bool:
+    def skip_current(self, force: bool = False) -> bool:
         """Skip the active step if it allows skipping. Returns success."""
         idx = self._active_index
-        if not self.workflow.steps[idx].allow_skip:
+        if not force and not self.workflow.steps[idx].allow_skip:
             return False
         if self.states[idx] not in (StepState.ACTIVE, StepState.RUNNING):
             return False
@@ -201,14 +201,18 @@ class WorkflowEngine:
     def select(self, index: int) -> bool:
         if 0 <= index < len(self.workflow.steps) and self.can_select(index):
             self.current_index = index
+            self._active_index = index
+            self.states[index] = StepState.ACTIVE
+            for j in range(index + 1, len(self.workflow.steps)):
+                self.states[j] = StepState.PENDING
+                self.exit_codes[j] = None
             return True
         return False
 
     def review_previous(self) -> bool:
         for i in range(self.current_index - 1, -1, -1):
             if self.can_select(i):
-                self.current_index = i
-                return True
+                return self.select(i)
         return False
 
     # -- summary -----------------------------------------------------------

@@ -33,6 +33,7 @@ dependencies = [
     "xonsh>=0.18.3",
     "packaging>=22.0",
     "pyyaml>=6.0.3",
+    "pyte>=0.8.2",
 ]
 
 [project.urls]

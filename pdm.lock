@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:77a2d6cf59a9ac6f4010979cc3565152950b8c721aac23f72ffb9e0d6a6e451f"
+content_hash = "sha256:61d0eb468462f094acfbe2f9cf8b2868fb6dfa55de8f7b60a0de0722f8db360e"
 
 [[metadata.targets]]
 requires_python = ">=3.13,<3.15"
@@ -1070,6 +1070,20 @@ groups = ["default"]
 files = [
     {file = "pyserial-3.5-py2.py3-none-any.whl", hash = "sha256:c4451db6ba391ca6ca299fb3ec7bae67a5c55dde170964c7a14ceefec02f2cf0"},
     {file = "pyserial-3.5.tar.gz", hash = "sha256:3c77e014170dfffbd816e6ffc205e9842efb10be9f58ec16d3e8675b4925cddb"},
+]
+
+[[package]]
+name = "pyte"
+version = "0.8.2"
+requires_python = ">=3.8"
+summary = "Simple VTXXX-compatible terminal emulator."
+groups = ["default"]
+dependencies = [
+    "wcwidth",
+]
+files = [
+    {file = "pyte-0.8.2-py3-none-any.whl", hash = "sha256:85db42a35798a5aafa96ac4d8da78b090b2c933248819157fc0e6f78876a0135"},
+    {file = "pyte-0.8.2.tar.gz", hash = "sha256:5af970e843fa96a97149d64e170c984721f20e52227a2f57f0a54207f08f083f"},
 ]
 
 [[package]]

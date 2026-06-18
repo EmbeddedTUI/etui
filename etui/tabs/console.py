@@ -1,11 +1,27 @@
 # Copyright (c) 2026 Pawel Wodnicki
 # Copyright (c) 2026 32bitmico LLC
 
+"""Console tab: a true terminal emulator backed by a PTY and pyte.
+
+A persistent interactive shell runs in a pseudo-terminal; its screen is
+emulated with pyte and rendered into a focusable Textual widget. Keystrokes
+are forwarded to the shell, so interactive programs (sudo, apt, vim, …) work
+exactly as in a normal terminal.
+"""
+
 import asyncio
 import os
-import sys
+import re
+import shlex
+import signal
 from pathlib import Path
-from uuid import uuid4
+
+from rich.segment import Segment
+from rich.style import Style
+from textual.app import ComposeResult
+from textual.containers import Vertical
+from textual.strip import Strip
+from textual.widget import Widget
 
 if os.name == "posix":
     import fcntl
@@ -13,333 +29,360 @@ if os.name == "posix":
     import struct
     import termios
 
-from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Input, Label, RichLog
+import pyte
 
 
-CWD_MARKER = "__ETUI_XONSH_CWD__"
+# pyte colour names → Rich colour names (None == terminal default).
+_PYTE_COLORS = {
+    "black": "black",
+    "red": "red",
+    "green": "green",
+    "brown": "yellow",
+    "blue": "blue",
+    "magenta": "magenta",
+    "cyan": "cyan",
+    "white": "white",
+    "brightblack": "bright_black",
+    "brightred": "bright_red",
+    "brightgreen": "bright_green",
+    "brightbrown": "bright_yellow",
+    "brightyellow": "bright_yellow",
+    "brightblue": "bright_blue",
+    "brightmagenta": "bright_magenta",
+    "brightcyan": "bright_cyan",
+    "brightwhite": "bright_white",
+    "default": None,
+}
+
+# Special keys → terminal byte sequences (xterm-style).
+_KEY_SEQUENCES = {
+    "enter": b"\r",
+    "tab": b"\t",
+    "escape": b"\x1b",
+    "backspace": b"\x7f",
+    "up": b"\x1b[A",
+    "down": b"\x1b[B",
+    "right": b"\x1b[C",
+    "left": b"\x1b[D",
+    "home": b"\x1b[H",
+    "end": b"\x1b[F",
+    "delete": b"\x1b[3~",
+    "insert": b"\x1b[2~",
+    "pageup": b"\x1b[5~",
+    "pagedown": b"\x1b[6~",
+    "space": b" ",
+    "f1": b"\x1bOP",
+    "f2": b"\x1bOQ",
+    "f3": b"\x1bOR",
+    "f4": b"\x1bOS",
+    "f5": b"\x1b[15~",
+    "f6": b"\x1b[17~",
+    "f7": b"\x1b[18~",
+    "f8": b"\x1b[19~",
+    "f9": b"\x1b[20~",
+    "f10": b"\x1b[21~",
+    "f12": b"\x1b[24~",
+}
 
 
-class ConsoleInput(Input):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.history: list[str] = []
-        self.history_index: int = -1
-        self.temp_input: str = ""
+class TerminalWidget(Widget, can_focus=True):
+    """A PTY-backed terminal emulator widget."""
 
+    DEFAULT_CSS = """
+    TerminalWidget {
+        height: 1fr;
+        background: $background;
+    }
+    """
+
+    def __init__(self, *, initial_cwd: Path | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.cols = 80
+        self.rows = 24
+        self.pyte_screen = pyte.Screen(self.cols, self.rows)
+        self.stream = pyte.ByteStream(self.pyte_screen)
+        self._fd: int | None = None
+        self._pid: int | None = None
+        self._initial_cwd = initial_cwd
+        self._exited = False
+        self._pending_commands = []
+        self._read_buffer = bytearray()
+        self._shell = os.environ.get("SHELL") or "/bin/bash"
+        self._command_counter = 0
+
+    # ----------------------------------------------------------- lifecycle
+    def on_mount(self) -> None:
+        if os.name != "posix":
+            self.pyte_screen.draw("Terminal is only supported on POSIX systems.")
+            self.refresh()
+            return
+        self._spawn()
+
+    async def on_unmount(self) -> None:
+        self._cleanup()
+
+    def _spawn(self) -> None:
+        try:
+            pid, fd = pty.fork()
+        except OSError as exc:  # pragma: no cover - environment dependent
+            self.pyte_screen.draw(f"Unable to start shell: {exc}")
+            self.refresh()
+            return
+        if pid == 0:
+            # Child process: become the shell.
+            try:
+                if self._initial_cwd and self._initial_cwd.is_dir():
+                    os.chdir(self._initial_cwd)
+            except OSError:
+                pass
+            os.environ["TERM"] = "xterm-256color"
+            os.environ.setdefault("COLORTERM", "truecolor")
+            shell = self._shell
+            try:
+                os.execvp(shell, [shell, "-i"])
+            except Exception:
+                os._exit(127)
+        # Parent process.
+        self._pid = pid
+        self._fd = fd
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        self._set_winsize()
+        asyncio.get_event_loop().add_reader(fd, self._on_read)
+
+    def _cleanup(self) -> None:
+        if self._fd is not None:
+            try:
+                asyncio.get_event_loop().remove_reader(self._fd)
+            except (OSError, ValueError, RuntimeError):
+                pass
+        if self._pid:
+            try:
+                os.killpg(self._pid, signal.SIGHUP)
+            except OSError:
+                try:
+                    os.kill(self._pid, signal.SIGHUP)
+                except OSError:
+                    pass
+            try:
+                os.waitpid(self._pid, os.WNOHANG)
+            except OSError:
+                pass
+        if self._fd is not None:
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+        self._fd = None
+        self._pid = None
+
+    # ------------------------------------------------------------- I/O
+    def _on_read(self) -> None:
+        try:
+            data = os.read(self._fd, 65536)
+        except (BlockingIOError, InterruptedError):
+            return
+        except OSError:
+            data = b""
+        if not data:
+            self._exited = True
+            self._cleanup()
+            self.pyte_screen.draw("\r\n[process exited]")
+            self.refresh()
+            self._resolve_pending_commands(-1)
+            return
+        self._read_buffer.extend(data)
+        if len(self._read_buffer) > 1048576:
+            del self._read_buffer[:-1048576]
+        self.stream.feed(data)
+        self.refresh()
+        self._check_command_markers()
+
+    def _resolve_pending_commands(self, exit_code: int) -> None:
+        for cmd_info in self._pending_commands:
+            cmd_info["exit_code"] = exit_code
+            cmd_info["event"].set()
+        self._pending_commands.clear()
+
+    def _check_command_markers(self) -> None:
+        if not self._pending_commands:
+            return
+        resolved_indices = []
+        for i, cmd_info in enumerate(self._pending_commands):
+            marker = cmd_info["marker"]
+            pattern = re.compile(re.escape(marker) + b"\\s+(-?\\d+)")
+            match = pattern.search(self._read_buffer)
+            if match:
+                try:
+                    exit_code = int(match.group(1))
+                    cmd_info["exit_code"] = exit_code
+                    cmd_info["event"].set()
+                    resolved_indices.append(i)
+                    del self._read_buffer[:match.end()]
+                except ValueError:  # pragma: no cover - defensive
+                    pass
+        for index in sorted(resolved_indices, reverse=True):
+            self._pending_commands.pop(index)
+
+    async def run_command(self, command: str) -> int:
+        """Type a command into the shell, wait for it to complete, and return exit code."""
+        self._command_counter += 1
+        marker = f"{self._command_counter}"
+        event = asyncio.Event()
+        cmd_info = {
+            "marker": f"__ETUI_CMD_DONE_{marker}__".encode(),
+            "event": event,
+            "exit_code": -1
+        }
+        self._pending_commands.append(cmd_info)
+        exit_var = "$status" if "fish" in self._shell else "$?"
+        echo_marker = f"__ETUI_CMD_DONE_\"\"{marker}__"
+        self.write(f"{command}; echo {echo_marker} {exit_var}\r".encode())
+        await event.wait()
+        return cmd_info["exit_code"]
+
+    def write(self, data: bytes) -> None:
+        """Write raw bytes to the shell's input."""
+        if self._fd is None:
+            return
+        try:
+            os.write(self._fd, data)
+        except OSError:
+            pass
+
+    def feed_command(self, command: str) -> None:
+        """Type a command into the shell followed by Enter."""
+        self.write(command.encode() + b"\r")
+
+    # ----------------------------------------------------------- sizing
+    def on_resize(self, event) -> None:
+        self._resize(event.size.width, event.size.height)
+
+    def _resize(self, width: int, height: int) -> None:
+        width = max(2, width)
+        height = max(2, height)
+        if width == self.cols and height == self.rows:
+            return
+        self.cols = width
+        self.rows = height
+        self.pyte_screen.resize(height, width)
+        self._set_winsize()
+        self.refresh()
+
+    def _set_winsize(self) -> None:
+        if self._fd is None:
+            return
+        try:
+            winsize = struct.pack("HHHH", self.rows, self.cols, 0, 0)
+            fcntl.ioctl(self._fd, termios.TIOCSWINSZ, winsize)
+        except OSError:
+            pass
+
+    # ----------------------------------------------------------- input
     def on_key(self, event) -> None:
-        if event.key == "enter":
-            val = self.value.strip()
-            if val:
-                if not self.history or self.history[-1] != val:
-                    self.history.append(val)
-            self.history_index = -1
-            self.temp_input = ""
-        elif event.key == "up":
-            event.prevent_default()
+        if self._fd is None:
+            return
+        key = event.key
+        data: bytes | None = None
+        if key in _KEY_SEQUENCES:
+            data = _KEY_SEQUENCES[key]
+        elif key.startswith("ctrl+") and len(key) == 6 and "a" <= key[5] <= "z":
+            data = bytes([ord(key[5]) - 96])
+        elif event.character is not None and event.character.isprintable():
+            data = event.character.encode()
+        if data is not None:
             event.stop()
-            if not self.history:
-                return
-            if self.history_index == -1:
-                self.temp_input = self.value
-                self.history_index = len(self.history) - 1
-            elif self.history_index > 0:
-                self.history_index -= 1
-            self.value = self.history[self.history_index]
-            self.cursor_position = len(self.value)
-        elif event.key == "down":
             event.prevent_default()
-            event.stop()
-            if self.history_index == -1:
-                return
-            if self.history_index < len(self.history) - 1:
-                self.history_index += 1
-                self.value = self.history[self.history_index]
-            else:
-                self.history_index = -1
-                self.value = self.temp_input
-            self.cursor_position = len(self.value)
+            self.write(data)
+
+    def on_click(self) -> None:
+        self.focus()
+
+    # ----------------------------------------------------------- render
+    def render_line(self, y: int) -> Strip:
+        width = self.size.width
+        if self._fd is None and not self._exited:
+            return Strip.blank(width)
+        if y >= self.rows:
+            return Strip.blank(width)
+        buffer_row = self.pyte_screen.buffer[y]
+        cursor = self.pyte_screen.cursor
+        show_cursor = self.has_focus and not cursor.hidden and not self._exited
+        segments = []
+        for x in range(self.cols):
+            char = buffer_row[x]
+            text = char.data or " "
+            style = self._char_style(char)
+            if show_cursor and y == cursor.y and x == cursor.x:
+                style += Style(reverse=True)
+            segments.append(Segment(text, style))
+        return Strip(segments, self.cols).adjust_cell_length(width)
+
+    def _char_style(self, char) -> Style:
+        return Style(
+            color=self._color(char.fg),
+            bgcolor=self._color(char.bg),
+            bold=bool(char.bold),
+            italic=bool(char.italics),
+            underline=bool(char.underscore),
+            strike=bool(char.strikethrough),
+            reverse=bool(char.reverse),
+            blink=bool(getattr(char, "blink", False)),
+        )
+
+    @staticmethod
+    def _color(value: str | None) -> str | None:
+        if not value or value == "default":
+            return None
+        if value in _PYTE_COLORS:
+            return _PYTE_COLORS[value]
+        if len(value) == 6 and all(c in "0123456789abcdefABCDEF" for c in value):
+            return f"#{value}"
+        return None
 
 
-class LogWidget(RichLog):
-    def __init__(self) -> None:
-        super().__init__(highlight=True, markup=True, wrap=True)
-        self.write("xonsh console ready")
-
-
-class ConsoleTab(Horizontal):
-    """Console tab powered by isolated xonsh command processes."""
+class ConsoleTab(Vertical):
+    """Console tab hosting a true terminal emulator."""
 
     DEFAULT_CSS = """
     ConsoleTab {
         height: 1fr;
     }
-
-    ConsoleTab Vertical {
-        height: 1fr;
-    }
-
-    ConsoleTab LogWidget {
-        height: 1fr;
-        overflow-x: hidden;
-        scrollbar-size-horizontal: 0;
-    }
-
-    ConsoleTab #console-input-line {
-        height: 1;
-        min-height: 1;
-        background: $background;
-        padding: 0;
-        margin: 0;
-    }
-
-    ConsoleTab #console-prompt {
-        width: 7;
-        height: 1;
-        padding: 0;
-        margin: 0;
-        background: $background;
-    }
-
-    ConsoleTab #console-input {
-        width: 1fr;
-        height: 1;
-        min-height: 1;
-        border: none;
-        background: $background;
-        padding: 0;
-        margin: 0;
-    }
-
-    ConsoleTab #console-input:focus {
-        border: none;
-        background: $background;
-    }
     """
 
     def __init__(self) -> None:
-        super().__init__()
-        self.cwd = Path.cwd()
-        self._command_lock = asyncio.Lock()
-        self._process: asyncio.subprocess.Process | None = None
-        # PTY master fd while a command is running, so interactive programs
-        # (e.g. sudo password prompts) get a real terminal and input typed in
-        # the console can be forwarded to them.
-        self._master_fd: int | None = None
+        super().__init__(id="console-tab")
+        self._cwd = Path.cwd()
 
     def compose(self) -> ComposeResult:
-        with Vertical():
-            yield LogWidget()
-            with Horizontal(id="console-input-line"):
-                yield Label("[bold cyan]xonsh>[/bold cyan]", id="console-prompt")
-                yield ConsoleInput(id="console-input", select_on_focus=False)
+        yield TerminalWidget(initial_cwd=self._cwd, id="console-terminal")
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id != "console-input":
+    @property
+    def cwd(self) -> Path:
+        return self._cwd
+
+    @cwd.setter
+    def cwd(self, value) -> None:
+        path = Path(value)
+        self._cwd = path
+        # If the terminal is live, change its directory too.
+        try:
+            term = self.query_one(TerminalWidget)
+        except Exception:
             return
+        if term._fd is not None and path.is_dir():
+            term.feed_command(f"cd {shlex.quote(str(path))}")
 
-        event.stop()
-        value = event.value
-        event.input.value = ""
-
-        # If a command is already running with a PTY, forward this line to it
-        # (e.g. answering a sudo password prompt) instead of starting anew.
-        if self._master_fd is not None and self._process is not None:
-            try:
-                os.write(self._master_fd, (value + "\n").encode())
-            except OSError:
-                pass
-            return
-
-        command = value.strip()
-        if command:
-            self.run_worker(
-                self.run_command(command),
-                name="console-command",
-                group="console",
-                exit_on_error=False,
-            )
-
-    async def run_command(self, command: str) -> None:
-        log = self.query_one(LogWidget)
-        if self._command_lock.locked():
-            log.write("[yellow]A command is already running.[/yellow]")
-            return
-
-        async with self._command_lock:
-            if not self.cwd.is_dir():
-                self.cwd = Path.cwd()
-            log.write(f"[bold cyan]xonsh>[/bold cyan] {command}")
-            cwd_marker = f"{CWD_MARKER}{uuid4().hex}:"
-            wrapped_command = (
-                f"{command}\n"
-                "import os\n"
-                f'print("{cwd_marker}" + os.getcwd())'
-            )
-            if os.name == "posix":
-                await self._run_in_pty(wrapped_command, cwd_marker, log)
-            else:
-                await self._run_in_pipe(wrapped_command, cwd_marker, log)
-
-    async def _run_in_pty(self, wrapped_command: str, cwd_marker: str, log: RichLog) -> None:
-        """Run the command attached to a pseudo-terminal so interactive
-        programs (sudo, apt, …) work and the child sees a real TTY."""
-        loop = asyncio.get_running_loop()
-        master_fd, slave_fd = pty.openpty()
-        self._set_winsize(master_fd)
-        done = asyncio.Event()
-        buffer = bytearray()
-
-        def emit(line_bytes: bytes) -> None:
-            text = line_bytes.decode(errors="replace").rstrip("\r")
-            if text.startswith(cwd_marker):
-                new_cwd = text.removeprefix(cwd_marker)
-                if new_cwd:
-                    self.cwd = Path(new_cwd)
-                return
-            log.write(text)
-
-        def on_readable() -> None:
-            try:
-                data = os.read(master_fd, 4096)
-            except OSError:
-                data = b""
-            if not data:
-                loop.remove_reader(master_fd)
-                done.set()
-                return
-            buffer.extend(data)
-            while b"\n" in buffer:
-                idx = buffer.index(b"\n")
-                line = bytes(buffer[:idx])
-                del buffer[: idx + 1]
-                emit(line)
-
+    async def run_command(self, command: str) -> int:
+        """Type and run a command in the terminal, awaiting its completion."""
         try:
-            self._process = await asyncio.create_subprocess_exec(
-                *self.command_runner(wrapped_command),
-                cwd=self.cwd,
-                stdin=slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
-                preexec_fn=self._become_session_leader,
-                env=self.command_environment(),
-            )
-            os.close(slave_fd)
-            slave_fd = -1
-            self._master_fd = master_fd
-            loop.add_reader(master_fd, on_readable)
+            return await self.query_one(TerminalWidget).run_command(command)
+        except Exception:
+            return -1
 
-            returncode = await self._process.wait()
-            await done.wait()
-            if buffer:  # flush any trailing partial line
-                emit(bytes(buffer))
-            if returncode != 0:
-                log.write(f"[red]Command exited with status {returncode}.[/red]")
-        except asyncio.CancelledError:
-            await self._terminate_process()
-            raise
-        except OSError as error:
-            log.write(f"[red]Unable to start xonsh: {error}[/red]")
-        finally:
-            try:
-                loop.remove_reader(master_fd)
-            except (OSError, ValueError):
-                pass
-            if slave_fd != -1:
-                os.close(slave_fd)
-            try:
-                os.close(master_fd)
-            except OSError:
-                pass
-            self._master_fd = None
-            self._process = None
-
-    async def _run_in_pipe(self, wrapped_command: str, cwd_marker: str, log: RichLog) -> None:
-        """Fallback (non-POSIX): run via pipes without a controlling TTY."""
+    def focus(self, scroll_visible: bool = True):  # type: ignore[override]
         try:
-            self._process = await asyncio.create_subprocess_exec(
-                *self.command_runner(wrapped_command),
-                cwd=self.cwd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=self.command_environment(),
-            )
-            assert self._process.stdout is not None
-
-            while line := await self._process.stdout.readline():
-                text = line.decode(errors="replace").rstrip("\r\n")
-                if text.startswith(cwd_marker):
-                    new_cwd = text.removeprefix(cwd_marker)
-                    if new_cwd:
-                        self.cwd = Path(new_cwd)
-                    continue
-                log.write(text)
-
-            returncode = await self._process.wait()
-            if returncode != 0:
-                log.write(f"[red]Command exited with status {returncode}.[/red]")
-        except asyncio.CancelledError:
-            await self._terminate_process()
-            raise
-        except OSError as error:
-            log.write(f"[red]Unable to start xonsh: {error}[/red]")
-        finally:
-            self._process = None
-
-    @staticmethod
-    def _become_session_leader() -> None:
-        """In the child: start a new session and acquire the slave PTY as the
-        controlling terminal so programs like sudo can prompt on it."""
-        os.setsid()
-        try:
-            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
-        except OSError:
-            pass
-
-    def _set_winsize(self, fd: int, rows: int = 40, cols: int = 120) -> None:
-        try:
-            winsize = struct.pack("HHHH", rows, cols, 0, 0)
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
-        except OSError:
-            pass
-
-    async def on_unmount(self) -> None:
-        await self._terminate_process()
-
-    async def _terminate_process(self) -> None:
-        process = self._process
-        if process is None or process.returncode is not None:
-            return
-        try:
-            process.terminate()
-        except ProcessLookupError:
-            return
-        try:
-            await asyncio.wait_for(process.wait(), timeout=2)
-        except TimeoutError:
-            try:
-                process.kill()
-            except ProcessLookupError:
-                return
-            await process.wait()
-
-    @staticmethod
-    def command_runner(command: str) -> list[str]:
-        """Run xonsh through ETUI so bundled builds use bundled modules."""
-        if getattr(sys, "frozen", False):
-            return [sys.executable, "--etui-xonsh-command", command]
-        return [
-            sys.executable,
-            "-m",
-            "etui",
-            "--etui-xonsh-command",
-            command,
-        ]
-
-    @staticmethod
-    def command_environment() -> dict[str, str]:
-        environment = os.environ.copy()
-        environment.setdefault("XONSH_HISTORY_BACKEND", "dummy")
-        return environment
+            self.query_one(TerminalWidget).focus(scroll_visible)
+        except Exception:
+            super().focus(scroll_visible)
+        return self

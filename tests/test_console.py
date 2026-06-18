@@ -1,119 +1,60 @@
 import os
-import sys
 import unittest
 from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.widgets import Input
 
-from etui.tabs.console import ConsoleTab, LogWidget
+from etui.tabs.console import ConsoleTab, TerminalWidget
 
 
 class ConsoleTestApp(App):
-    def __init__(self) -> None:
-        super().__init__()
-        self.bubbled_submissions = 0
-
     def compose(self) -> ComposeResult:
         yield ConsoleTab()
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        self.bubbled_submissions += 1
 
-
-class ConsoleCommandTests(unittest.TestCase):
-    def test_source_command_runner_uses_etui_module(self) -> None:
-        command = ConsoleTab.command_runner("ls")
-
-        self.assertEqual(
-            command,
-            [
-                sys.executable,
-                "-m",
-                "etui",
-                "--etui-xonsh-command",
-                "ls",
-            ],
-        )
-
-    def test_command_environment_defaults_to_dummy_history(self) -> None:
-        old_value = os.environ.pop("XONSH_HISTORY_BACKEND", None)
-        try:
-            environment = ConsoleTab.command_environment()
-        finally:
-            if old_value is not None:
-                os.environ["XONSH_HISTORY_BACKEND"] = old_value
-
-        self.assertEqual(environment["XONSH_HISTORY_BACKEND"], "dummy")
-
+class ConsoleBasicTests(unittest.TestCase):
     def test_console_starts_in_process_working_directory(self) -> None:
         self.assertEqual(ConsoleTab().cwd, Path.cwd())
 
 
-class ConsoleWidgetTests(unittest.IsolatedAsyncioTestCase):
-    async def test_submit_is_single_line_and_does_not_bubble(self) -> None:
+@unittest.skipUnless(os.name == "posix", "terminal requires a POSIX PTY")
+class ConsoleTerminalTests(unittest.IsolatedAsyncioTestCase):
+    async def _wait_for(self, pilot, term: TerminalWidget, needle: str, tries: int = 100) -> bool:
+        for _ in range(tries):
+            await pilot.pause(0.05)
+            if any(needle in row for row in term.pyte_screen.display):
+                return True
+        return False
+
+    async def test_run_command_outputs_to_terminal(self) -> None:
         app = ConsoleTestApp()
         async with app.run_test() as pilot:
-            console_input = app.query_one("#console-input", Input)
-            log = app.query_one(LogWidget)
-            console_input.focus()
+            term = app.query_one(TerminalWidget)
+            await pilot.pause(0.2)  # let the shell start
+            await app.query_one(ConsoleTab).run_command("echo hello_console_42")
+            found = await self._wait_for(pilot, term, "hello_console_42")
+            self.assertTrue(found, term.pyte_screen.display)
 
-            await pilot.press("e", "c", "h", "o", "space", "o", "k", "enter")
-            for _ in range(100):
-                if not app.query_one(ConsoleTab)._command_lock.locked():
-                    break
-                await pilot.pause()
-
-            text = "\n".join(line.text for line in log.lines)
-            self.assertEqual(app.bubbled_submissions, 0)
-            self.assertEqual(console_input.size.height, 1)
-            self.assertFalse(log.show_horizontal_scrollbar)
-            self.assertNotIn("Traceback", text)
-            self.assertEqual(text.count("xonsh> echo ok"), 1)
-
-    async def test_console_history_navigation(self) -> None:
+    async def test_keys_are_forwarded_to_shell(self) -> None:
         app = ConsoleTestApp()
         async with app.run_test() as pilot:
-            console_input = app.query_one("#console-input")
-            console_input.focus()
+            term = app.query_one(TerminalWidget)
+            term.focus()
+            await pilot.pause(0.2)
+            for ch in "echo KEYS_WORK":
+                await pilot.press("space" if ch == " " else ch)
+            await pilot.press("enter")
+            found = await self._wait_for(pilot, term, "KEYS_WORK")
+            self.assertTrue(found, term.pyte_screen.display)
 
-            # Submit first command
-            await pilot.press("e", "c", "h", "o", "space", "1", "enter")
-            for _ in range(100):
-                if not app.query_one(ConsoleTab)._command_lock.locked():
-                    break
-                await pilot.pause()
-
-            # Submit second command
-            await pilot.press("e", "c", "h", "o", "space", "2", "enter")
-            for _ in range(100):
-                if not app.query_one(ConsoleTab)._command_lock.locked():
-                    break
-                await pilot.pause()
-
-            # Type something but do not submit
-            await pilot.press("t", "e", "m", "p")
-            self.assertEqual(console_input.value, "temp")
-
-            # Press Up arrow: should show the last submitted command ("echo 2")
-            await pilot.press("up")
-            self.assertEqual(console_input.value, "echo 2")
-
-            # Press Up arrow again: should show the first submitted command ("echo 1")
-            await pilot.press("up")
-            self.assertEqual(console_input.value, "echo 1")
-
-            # Press Up arrow again: should stay at "echo 1" (first command)
-            await pilot.press("up")
-            self.assertEqual(console_input.value, "echo 1")
-
-            # Press Down arrow: should go back to "echo 2"
-            await pilot.press("down")
-            self.assertEqual(console_input.value, "echo 2")
-
-            # Press Down arrow again: should restore the typed text ("temp")
-            await pilot.press("down")
-            self.assertEqual(console_input.value, "temp")
+    async def test_terminal_cleans_up_on_unmount(self) -> None:
+        app = ConsoleTestApp()
+        async with app.run_test() as pilot:
+            term = app.query_one(TerminalWidget)
+            await pilot.pause(0.2)
+            self.assertIsNotNone(term._fd)
+        self.assertIsNone(term._fd)
+        self.assertIsNone(term._pid)
 
 
 if __name__ == "__main__":

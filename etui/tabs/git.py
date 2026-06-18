@@ -15,6 +15,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.worker import Worker, WorkerCancelled
 from textual.widgets import Button, Input, Label, RichLog, Tree
+from textual.css.query import NoMatches
 
 
 class RepositoryChanged(Message):
@@ -385,7 +386,10 @@ class GitTab(Vertical):
                 self._active_subprocess = None
 
     async def _validate_and_load_repo(self, path: str) -> None:
-        info_bar = self.query_one("#lbl-git-info", Label)
+        try:
+            info_bar = self.query_one("#lbl-git-info", Label)
+        except NoMatches:
+            return
         candidate = Path(path).expanduser().resolve()
         if not candidate.is_dir():
             self.repo_path = None
@@ -412,44 +416,47 @@ class GitTab(Vertical):
         if self.repo_path is None:
             return
 
-        branch_code, branch_out, branch_error = await self._capture_git(
-            ["branch", "--show-current"]
-        )
-        if branch_code != 0:
-            raise OSError(branch_error.decode(errors="replace").strip())
-        branch = branch_out.decode(errors="replace").strip() or "DETACHED"
-
-        hash_code, hash_out, hash_error = await self._capture_git(
-            ["rev-parse", "--short", "HEAD"]
-        )
-        if hash_code == 0:
-            commit_hash = hash_out.decode(errors="replace").strip() or "N/A"
-        else:
-            commit_hash = "N/A"
-            if b"unknown revision" not in hash_error.lower():
-                self._write_log(
-                    hash_error.decode(errors="replace").strip(),
-                    style="yellow",
-                )
-
-        status_code, status_out, status_error = await self._capture_git(
-            ["status", "--porcelain=v2", "-z"]
-        )
-        if status_code != 0:
-            raise OSError(status_error.decode(errors="replace").strip())
-
-        staged, unstaged = self._parse_porcelain_v2(status_out)
-        self.query_one("#lbl-git-info", Label).update(
-            Text.assemble(
-                "Branch: ",
-                (branch, "bold cyan"),
-                "  |  Commit: ",
-                (commit_hash, "bold green"),
-                "  |  Changes: ",
-                (str(len(staged) + len(unstaged)), "bold yellow"),
+        try:
+            branch_code, branch_out, branch_error = await self._capture_git(
+                ["branch", "--show-current"]
             )
-        )
-        self._rebuild_tree(staged, unstaged)
+            if branch_code != 0:
+                raise OSError(branch_error.decode(errors="replace").strip())
+            branch = branch_out.decode(errors="replace").strip() or "DETACHED"
+
+            hash_code, hash_out, hash_error = await self._capture_git(
+                ["rev-parse", "--short", "HEAD"]
+            )
+            if hash_code == 0:
+                commit_hash = hash_out.decode(errors="replace").strip() or "N/A"
+            else:
+                commit_hash = "N/A"
+                if b"unknown revision" not in hash_error.lower():
+                    self._write_log(
+                        hash_error.decode(errors="replace").strip(),
+                        style="yellow",
+                    )
+
+            status_code, status_out, status_error = await self._capture_git(
+                ["status", "--porcelain=v2", "-z"]
+            )
+            if status_code != 0:
+                raise OSError(status_error.decode(errors="replace").strip())
+
+            staged, unstaged = self._parse_porcelain_v2(status_out)
+            self.query_one("#lbl-git-info", Label).update(
+                Text.assemble(
+                    "Branch: ",
+                    (branch, "bold cyan"),
+                    "  |  Commit: ",
+                    (commit_hash, "bold green"),
+                    "  |  Changes: ",
+                    (str(len(staged) + len(unstaged)), "bold yellow"),
+                )
+            )
+            self._rebuild_tree(staged, unstaged)
+        except NoMatches:
+            pass
 
     @staticmethod
     def _parse_porcelain_v2(
@@ -579,7 +586,10 @@ class GitTab(Vertical):
     async def _show_file_diff(self, path: str, is_staged: bool) -> None:
         if self.repo_path is None:
             return
-        log = self.query_one("#git-diff-viewer", RichLog)
+        try:
+            log = self.query_one("#git-diff-viewer", RichLog)
+        except NoMatches:
+            return
         log.clear()
 
         base_args = ["diff"]
@@ -624,7 +634,10 @@ class GitTab(Vertical):
     async def _run_git_command(self, args: list[str]) -> None:
         if self.repo_path is None:
             return
-        log = self.query_one("#git-diff-viewer", RichLog)
+        try:
+            log = self.query_one("#git-diff-viewer", RichLog)
+        except NoMatches:
+            return
         log.clear()
         log.write(Text(f"Running: git {shlex.join(args)}", style="bold cyan"))
 
@@ -670,9 +683,12 @@ class GitTab(Vertical):
             pass
 
     def _write_log(self, message: str, *, style: str | None = None) -> None:
-        self.query_one("#git-diff-viewer", RichLog).write(
-            Text(message, style=style)
-        )
+        try:
+            self.query_one("#git-diff-viewer", RichLog).write(
+                Text(message, style=style)
+            )
+        except NoMatches:
+            pass
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id

@@ -320,7 +320,7 @@ class EtuiApp(App):
                 pass
         elif pane_id == "console":
             try:
-                self.query_one("#console-input").focus()
+                self.query_one("#console-terminal").focus()
             except Exception:
                 pass
         elif pane_id == "serial":

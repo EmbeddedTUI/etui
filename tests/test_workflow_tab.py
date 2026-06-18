@@ -5,6 +5,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from textual.app import App, ComposeResult
 
 from etui.tabs.workflow import WorkflowTab
 from etui.workflow.engine import StepState, WorkflowEngine
@@ -144,6 +145,16 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(policy, "stop")
         self.assertEqual(e.state_at(0), StepState.FAILED)
 
+    def test_navigation_reset_state(self) -> None:
+        e = self._engine()
+        e.step_completed(0)
+        self.assertEqual(e.state_at(0), StepState.DONE)
+        self.assertEqual(e.state_at(1), StepState.ACTIVE)
+
+        self.assertTrue(e.review_previous())
+        self.assertEqual(e.state_at(0), StepState.ACTIVE)
+        self.assertEqual(e.state_at(1), StepState.PENDING)
+
 
 class TabTests(unittest.TestCase):
     def test_resolve_cwd_containment(self) -> None:
@@ -195,6 +206,92 @@ class TabTests(unittest.TestCase):
 
         names = [m.name for m in list_workflows(builtin_dir())]
         self.assertIn("Zephyr Getting Started", names)
+
+
+class WorkflowTabTestApp(App):
+    def compose(self) -> ComposeResult:
+        yield WorkflowTab()
+
+
+class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sync_button_states_and_press(self) -> None:
+        from textual.widgets import Button
+        app = WorkflowTabTestApp()
+        async with app.run_test() as pilot:
+            tab = app.query_one(WorkflowTab)
+            sync_btn = tab.query_one("#btn-workflow-sync", Button)
+            self.assertTrue(sync_btn.disabled)
+
+            tab.busy = True
+            tab._current_operation_name = "console-command"
+            tab._sync_controls()
+            self.assertFalse(sync_btn.disabled)
+
+            await pilot.click("#btn-workflow-sync")
+            await pilot.pause()
+
+    async def test_skip_aborted_step(self) -> None:
+        from textual.widgets import Button
+        from etui.workflow.schema import build_workflow
+        app = WorkflowTabTestApp()
+        async with app.run_test() as pilot:
+            tab = app.query_one(WorkflowTab)
+            wf = build_workflow({
+                "name": "Test",
+                "steps": [
+                    {"id": "step1", "title": "Step 1", "commands": ["echo 1"], "allow_skip": False}
+                ]
+            })
+            tab.workflow = wf
+            tab.engine = WorkflowEngine(wf)
+            tab._aborted_steps = set()
+            tab._sync_controls()
+
+            skip_btn = tab.query_one("#btn-workflow-skip", Button)
+            self.assertTrue(skip_btn.disabled)
+
+            tab._aborted_steps.add("step1")
+            tab._sync_controls()
+            self.assertFalse(skip_btn.disabled)
+
+            await pilot.click("#btn-workflow-skip")
+            await pilot.pause()
+            self.assertEqual(tab.engine.state_at(0), StepState.SKIPPED)
+
+    async def test_consecutive_skips_after_abort(self) -> None:
+        from textual.widgets import Button
+        from etui.workflow.schema import build_workflow
+        app = WorkflowTabTestApp()
+        async with app.run_test() as pilot:
+            tab = app.query_one(WorkflowTab)
+            wf = build_workflow({
+                "name": "Test",
+                "steps": [
+                    {"id": "step1", "title": "Step 1", "commands": ["echo 1"], "allow_skip": False},
+                    {"id": "step2", "title": "Step 2", "commands": ["echo 2"], "allow_skip": False}
+                ]
+            })
+            tab.workflow = wf
+            tab.engine = WorkflowEngine(wf)
+            tab._sync_controls()
+
+            skip_btn = tab.query_one("#btn-workflow-skip", Button)
+            self.assertTrue(skip_btn.disabled)
+
+            tab._workflow_aborted = True
+            tab._sync_controls()
+            self.assertFalse(skip_btn.disabled)
+
+            await pilot.click("#btn-workflow-skip")
+            await pilot.pause()
+            self.assertEqual(tab.engine.state_at(0), StepState.SKIPPED)
+
+            tab._sync_controls()
+            self.assertFalse(skip_btn.disabled)
+
+            await pilot.click("#btn-workflow-skip")
+            await pilot.pause()
+            self.assertEqual(tab.engine.state_at(1), StepState.SKIPPED)
 
 
 if __name__ == "__main__":

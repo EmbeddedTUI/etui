@@ -232,6 +232,9 @@ class WorkflowTab(Vertical):
         self._started_at: float = 0.0
         # sudo support: password cached for the session, fed to `sudo -S`.
         self._sudo_password: str | None = None
+        self._current_operation_name: str | None = None
+        self._aborted_steps: set[str] = set()
+        self._workflow_aborted: bool = False
 
     # ------------------------------------------------------------------ UI
     def compose(self) -> ComposeResult:
@@ -251,6 +254,7 @@ class WorkflowTab(Vertical):
             yield Button("Run", id="btn-workflow-run", disabled=True)
             yield Button("Console", id="btn-workflow-console", disabled=True)
             yield Button("Skip", id="btn-workflow-skip", disabled=True)
+            yield Button("Sync", id="btn-workflow-sync", disabled=True)
             yield Button("Abort", id="btn-workflow-abort", variant="warning", disabled=True)
             yield Button("Prev", id="btn-workflow-prev", disabled=True)
 
@@ -327,6 +331,8 @@ class WorkflowTab(Vertical):
             return False
         self.engine = WorkflowEngine(self.workflow)
         self.run_all = False
+        self._aborted_steps = set()
+        self._workflow_aborted = False
         await self._render_steps()
         self._show_step(self.engine.current_index)
         self._sync_controls()
@@ -388,12 +394,15 @@ class WorkflowTab(Vertical):
 
     # ------------------------------------------------------------ controls
     def _sync_controls(self) -> None:
+        if not self.busy:
+            self._current_operation_name = None
         has_engine = self.engine is not None
         try:
             run_all_btn = self.query_one("#btn-workflow-run-all", Button)
             run_btn = self.query_one("#btn-workflow-run", Button)
             console_btn = self.query_one("#btn-workflow-console", Button)
             skip_btn = self.query_one("#btn-workflow-skip", Button)
+            sync_btn = self.query_one("#btn-workflow-sync", Button)
             abort_btn = self.query_one("#btn-workflow-abort", Button)
             prev_btn = self.query_one("#btn-workflow-prev", Button)
             reload_btn = self.query_one("#btn-workflow-reload", Button)
@@ -404,6 +413,7 @@ class WorkflowTab(Vertical):
         abort_btn.disabled = not self.busy
         reload_btn.disabled = self.busy
         select.disabled = self.busy
+        sync_btn.disabled = not (self.busy and getattr(self, "_current_operation_name", None) == "console-command")
 
         if not has_engine or self.busy:
             run_all_btn.disabled = self.busy or not has_engine
@@ -424,8 +434,9 @@ class WorkflowTab(Vertical):
 
         run_all_btn.disabled = complete
         run_btn.disabled = complete or not viewing_active or active is None or active.mode != "manual"
+        is_aborted = getattr(self, "_workflow_aborted", False) or (active is not None and active.id in getattr(self, "_aborted_steps", set()))
         skip_btn.disabled = (
-            complete or not viewing_active or active is None or not active.allow_skip
+            complete or not viewing_active or active is None or not (active.allow_skip or is_aborted)
         )
         prev_btn.disabled = engine.current_index == 0
 
@@ -435,6 +446,9 @@ class WorkflowTab(Vertical):
             coro.close()
             return
         self.busy = True  # synchronous race guard
+        self._current_operation_name = name
+        if name in ("workflow-run", "console-command"):
+            self._workflow_aborted = False
         self._sync_controls()
         self._operation_worker = self.run_worker(
             coro, name=name, group="workflow-ops", exclusive=True, exit_on_error=False
@@ -519,6 +533,7 @@ class WorkflowTab(Vertical):
         except asyncio.CancelledError:
             log.write("\n[bold yellow]Step aborted by user.[/bold yellow]")
             engine.mark_active()
+            self._aborted_steps.add(step.id)
             self.run_all = False
             raise
         finally:
@@ -720,16 +735,67 @@ class WorkflowTab(Vertical):
 
             console = self.app.query_one(ConsoleTab)
             self.app.query_one(TabbedContent).active = "console"
-            self.app.run_worker(
-                console.run_command(combined),
+            self._start_operation(
+                self._run_step_in_console(console, combined),
                 name="console-command",
-                group="console",
-                exit_on_error=False,
             )
         except Exception as exc:  # pragma: no cover - defensive
             self.query_one("#workflow-step-output", RichLog).write(
                 f"[red]Could not send to console: {escape(str(exc))}[/red]"
             )
+
+    async def _run_step_in_console(self, console, combined: str) -> None:
+        engine = self.engine
+        if engine is None:
+            self.busy = False
+            return
+        step = engine.active_step()
+        if step is None:
+            self.busy = False
+            return
+
+        engine.mark_running()
+        self._refresh_step_labels()
+        self._update_status_for_current()
+
+        log = self.query_one("#workflow-step-output", RichLog)
+        log.write(f"[bold]── Step: {escape(step.title)} (Console) ──[/bold]")
+        log.write(f"[bold cyan]$ {escape(combined)}[/bold cyan]")
+
+        try:
+            ret = await console.run_command(combined)
+        except asyncio.CancelledError:
+            engine.mark_active()
+            self._aborted_steps.add(step.id)
+            self.run_all = False
+            raise
+        finally:
+            self.busy = False
+
+        if ret != 0:
+            policy = engine.step_failed(ret)
+            if policy == "prompt":
+                self.run_all = False
+                cont = await self.app.push_screen_wait(
+                    ConfirmDialog(
+                        "Step failed — continue anyway?",
+                        [f"Step '{step.id}' failed (exit {ret})."],
+                        dangerous=False,
+                    )
+                )
+                engine.resolve_prompt(cont)
+                if cont:
+                    log.write("[yellow]Continuing after failure.[/yellow]")
+                else:
+                    log.write("[red]Workflow stopped due to failure.[/red]")
+            elif policy == "stop":
+                self.run_all = False
+                log.write("[red]Workflow stopped due to failure.[/red]")
+        else:
+            engine.step_completed(0)
+            log.write(f"[green]Step '{escape(step.title)}' complete.[/green]")
+
+        self._after_step_update()
 
     # ------------------------------------------------------------ events
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -746,8 +812,26 @@ class WorkflowTab(Vertical):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
         if bid == "btn-workflow-abort":
+            self._workflow_aborted = True
             await self.cancel_active_operation()
             self._after_step_update()
+            return
+        if bid == "btn-workflow-sync":
+            try:
+                if __package__:
+                    from .console import ConsoleTab
+                else:
+                    from tabs.console import ConsoleTab
+                console = self.app.query_one(ConsoleTab)
+                term = console.query_one("#console-terminal")
+                term._resolve_pending_commands(0)
+            except Exception:
+                try:
+                    with open("sync_error.log", "w") as f:
+                        import traceback
+                        traceback.print_exc(file=f)
+                except Exception:
+                    pass
             return
         if bid == "btn-workflow-reload":
             await self.cancel_active_operation()
@@ -768,7 +852,9 @@ class WorkflowTab(Vertical):
             self._started_at = time.monotonic()
             self._start_operation(self._run_active_step(), "workflow-run")
         elif bid == "btn-workflow-skip":
-            if self.engine.skip_current():
+            active = self.engine.active_step()
+            force = getattr(self, "_workflow_aborted", False) or (active is not None and active.id in getattr(self, "_aborted_steps", set()))
+            if self.engine.skip_current(force=force):
                 self._after_step_update()
         elif bid == "btn-workflow-prev":
             if self.engine.review_previous():
