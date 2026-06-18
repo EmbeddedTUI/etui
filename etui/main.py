@@ -35,7 +35,7 @@ if __package__:
     from .tabs.workflow import WorkflowTab
     from .settings import SettingsManager
     from .bus import MessageBus
-    from .bus_contract import SVC_NAV_ACTIVATE, TOPIC_TAB_ACTIVATED, TOPIC_TAB_DEACTIVATED, TabEvent, SVC_SETTINGS_GET, SVC_SETTINGS_SET
+    from .bus_contract import SVC_NAV_ACTIVATE, TOPIC_TAB_ACTIVATED, TOPIC_TAB_DEACTIVATED, TabEvent, SVC_SETTINGS_GET, SVC_SETTINGS_SET, SVC_HELP_ADD_ENTRY
 else:
     from tabs.help import HelpTab, OpenDocFile
     from tabs.about import AboutTab
@@ -54,7 +54,7 @@ else:
     from tabs.workflow import WorkflowTab
     from settings import SettingsManager
     from bus import MessageBus
-    from bus_contract import SVC_NAV_ACTIVATE, TOPIC_TAB_ACTIVATED, TOPIC_TAB_DEACTIVATED, TabEvent, SVC_SETTINGS_GET, SVC_SETTINGS_SET
+    from bus_contract import SVC_NAV_ACTIVATE, TOPIC_TAB_ACTIVATED, TOPIC_TAB_DEACTIVATED, TabEvent, SVC_SETTINGS_GET, SVC_SETTINGS_SET, SVC_HELP_ADD_ENTRY
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -270,8 +270,8 @@ class EtuiApp(App):
 
                 # Register help document if specified and it exists
                 if lp.spec.help_doc and lp.spec.help_doc.is_file():
-                    if self.bus.has("help.add_entry"):
-                        await self.bus.call("help.add_entry", title=lp.spec.title, path=lp.spec.help_doc)
+                    if self.bus.has(SVC_HELP_ADD_ENTRY):
+                        await self.bus.call(SVC_HELP_ADD_ENTRY, title=lp.spec.title, path=lp.spec.help_doc)
 
                 logger.info("mounted plugin tab %s (%s)", lp.spec.id, lp.dist)
             except Exception as exc:

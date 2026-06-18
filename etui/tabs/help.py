@@ -10,6 +10,13 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Label, ListItem, ListView, Static
 
+if __package__:
+    from ..bus import BusMixin
+    from ..bus_contract import SVC_HELP_ADD_ENTRY
+else:
+    from bus import BusMixin
+    from bus_contract import SVC_HELP_ADD_ENTRY
+
 
 _DOC_DIR = Path(__file__).parents[1] / "doc"
 
@@ -41,8 +48,40 @@ class OpenDocFile(Message):
         self.path = path
 
 
-class HelpTab(Vertical):
+class HelpTab(BusMixin, Vertical):
     """Help tab — documentation browser linked to the Files tab viewer."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._disposers = []
+        self._plugin_entries: list[tuple[str, Path]] = []
+
+    def on_mount(self) -> None:
+        self._disposers = [
+            self.bus.provide(SVC_HELP_ADD_ENTRY, self.add_entry),
+        ]
+
+    def on_unmount(self) -> None:
+        for dispose in self._disposers:
+            dispose()
+        self._disposers = []
+
+    async def add_entry(self, title: str, path: Path) -> None:
+        """Register a dynamic help document path under the Plugins category."""
+        self._plugin_entries.append((title, path))
+
+        try:
+            help_list = self.query_one("#help-list", ListView)
+        except Exception:
+            return
+
+        if len(self._plugin_entries) == 1:
+            header_item = ListItem(Label("Plugins"), disabled=True)
+            help_list.append(header_item)
+
+        item = ListItem(Label(f"  {title}"))
+        item.add_class("sub-item")
+        help_list.append(item)
 
     DEFAULT_CSS = """
     HelpTab {
@@ -90,8 +129,15 @@ class HelpTab(Vertical):
         index = event.list_view.index
         if index is None:
             return
-        _, doc_rel, _ = _MENU[index]
-        doc_path = _DOC_DIR / doc_rel
+        if index < len(_MENU):
+            _, doc_rel, _ = _MENU[index]
+            doc_path = _DOC_DIR / doc_rel
+        else:
+            plugin_idx = index - (len(_MENU) + 1)
+            if plugin_idx < 0 or plugin_idx >= len(self._plugin_entries):
+                return
+            _, doc_path = self._plugin_entries[plugin_idx]
+
         if not doc_path.is_file():
             self.notify(f"Doc file not found: {doc_path}", severity="warning")
             return

@@ -28,6 +28,8 @@ SVC_NAV_ACTIVATE = "nav.activate_tab"
 SVC_SETTINGS_GET = "settings.get"
 # settings.set(section: str, key: str, value: Any) -> None
 SVC_SETTINGS_SET = "settings.set"
+# help.add_entry(title: str, path: Path) -> None
+SVC_HELP_ADD_ENTRY = "help.add_entry"
 
 
 @dataclass(frozen=True)

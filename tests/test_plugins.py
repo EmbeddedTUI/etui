@@ -373,3 +373,93 @@ class PluginMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
             # After app teardown, check disposers are cleaned up
             self.assertEqual(len(lp.scoped_bus._disposers), 0)
+
+    @patch("etui.plugins._entry_points")
+    async def test_plugin_help_registration(self, mock_eps: MagicMock) -> None:
+        from etui.main import EtuiApp
+        from etui.settings import SettingsManager
+        from etui.tabs.help import HelpTab, OpenDocFile, _MENU
+        from textual.widgets import ListView
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = Path(d) / "settings.yaml"
+            help_doc_path = Path(d) / "help.md"
+            help_doc_path.write_text("Hello dynamic help doc content!")
+
+            class MockHelpAppPlugin(EtuiTabPlugin):
+                def spec(self) -> TabSpec:
+                    return TabSpec(
+                        id="plugin-mockhelp",
+                        title="Mock Help",
+                        order=1600,
+                        help_doc=help_doc_path
+                    )
+
+                def create_widget(self) -> Widget:
+                    return MockPluginWidget()
+
+            mock_eps.return_value = [
+                MockEntryPoint("mock_help_plugin", MockHelpAppPlugin),
+            ]
+
+            app = EtuiApp()
+            app.settings_manager = SettingsManager(path=settings_path)
+            app.workspace_root = app.load_workspace_root()
+
+            async with app.run_test() as pilot:
+                help_tab = app.query_one(HelpTab)
+                
+                # Check that the help tab registered the plugin entry
+                self.assertEqual(len(help_tab._plugin_entries), 1)
+                self.assertEqual(help_tab._plugin_entries[0][0], "Mock Help")
+                self.assertEqual(help_tab._plugin_entries[0][1], help_doc_path)
+
+                help_list = help_tab.query_one("#help-list", ListView)
+                
+                header_idx = len(_MENU)
+                plugin_idx = header_idx + 1
+
+                self.assertEqual(len(help_list.children), len(_MENU) + 2)
+                
+                # Verify that OpenDocFile message was posted with help_doc_path on selection
+                original_post_message = help_tab.post_message
+                help_tab.post_message = MagicMock()
+                try:
+                    mock_event = MagicMock()
+                    mock_event.list_view.index = plugin_idx
+                    help_tab.on_list_view_selected(mock_event)
+                    
+                    help_tab.post_message.assert_called_once()
+                    msg = help_tab.post_message.call_args[0][0]
+                    self.assertIsInstance(msg, OpenDocFile)
+                    self.assertEqual(msg.path, help_doc_path)
+                finally:
+                    help_tab.post_message = original_post_message
+
+                # Selecting the header (Plugins) should not post OpenDocFile
+                help_tab.post_message = MagicMock()
+                try:
+                    mock_event = MagicMock()
+                    mock_event.list_view.index = header_idx
+                    help_tab.on_list_view_selected(mock_event)
+                    help_tab.post_message.assert_not_called()
+                finally:
+                    help_tab.post_message = original_post_message
+
+                # If the help document does not exist, it should notify with warning and not post
+                help_tab.post_message = MagicMock()
+                try:
+                    help_doc_path.unlink()
+                    mock_event = MagicMock()
+                    mock_event.list_view.index = plugin_idx
+                    
+                    with patch.object(help_tab, "notify") as mock_notify:
+                        help_tab.on_list_view_selected(mock_event)
+                        mock_notify.assert_called_once_with(f"Doc file not found: {help_doc_path}", severity="warning")
+                    
+                    help_tab.post_message.assert_not_called()
+                finally:
+                    help_tab.post_message = original_post_message
+
+
