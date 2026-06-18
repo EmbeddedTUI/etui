@@ -438,7 +438,7 @@ class EtuiApp(App):
         if old_pane_id == "workflow" and pane_id != "workflow":
             try:
                 workflow_tab = self.query_one(WorkflowTab)
-                if workflow_tab.busy:
+                if workflow_tab.busy and not workflow_tab.active_operation_detached:
                     self.run_worker(
                         workflow_tab.cancel_active_operation(),
                         name="cancel-workflow-operation",

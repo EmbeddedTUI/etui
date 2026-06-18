@@ -378,6 +378,77 @@ class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(tab.engine.state_at(1), StepState.SKIPPED)
 
+    async def test_tab_switch_auto_cancel_exception_for_detached(self) -> None:
+        """Switching away from Workflow tab cancels normal operations but not detached ones."""
+        import asyncio
+        import tempfile
+        from pathlib import Path
+        from etui.main import EtuiApp
+        from etui.settings import SettingsManager
+        from textual.widgets import TabbedContent
+
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = Path(d) / "settings.yaml"
+            app = EtuiApp()
+            app.settings_manager = SettingsManager(path=settings_path)
+            app.workspace_root = app.load_workspace_root()
+            
+            async with app.run_test() as pilot:
+                # Get tabs and switch to workflow first
+                workflow_tab = app.query_one(WorkflowTab)
+                tabbed_content = app.query_one(TabbedContent)
+                
+                # 1. Test detached operation (should NOT be cancelled)
+                async def fake_detached_op():
+                    try:
+                        await asyncio.sleep(5)
+                    except asyncio.CancelledError:
+                        raise
+                    
+                tabbed_content.active = "workflow"
+                await pilot.pause()
+                
+                # Start detached operation
+                workflow_tab._start_operation(fake_detached_op(), "console-command")
+                self.assertTrue(workflow_tab.busy)
+                self.assertEqual(workflow_tab._current_operation_name, "console-command")
+                
+                # Switch away to console
+                tabbed_content.active = "console"
+                await pilot.pause()
+                
+                # Detached operation should still be running / busy
+                self.assertTrue(workflow_tab.busy)
+                self.assertFalse(workflow_tab._operation_worker.is_cancelled)
+                
+                # Clean up detached operation
+                await workflow_tab.cancel_active_operation()
+                await pilot.pause()
+                
+                # 2. Test normal operation (should be cancelled on tab switch)
+                async def fake_normal_op():
+                    try:
+                        await asyncio.sleep(5)
+                    except asyncio.CancelledError:
+                        raise
+                    
+                tabbed_content.active = "workflow"
+                await pilot.pause()
+                
+                # Start normal operation
+                workflow_tab._start_operation(fake_normal_op(), "workflow-run")
+                self.assertTrue(workflow_tab.busy)
+                self.assertEqual(workflow_tab._current_operation_name, "workflow-run")
+                
+                # Switch away to console
+                tabbed_content.active = "console"
+                await pilot.pause()
+                
+                # Normal operation should be cancelled / not busy
+                self.assertFalse(workflow_tab.busy)
+                self.assertTrue(workflow_tab._operation_worker.is_cancelled)
+
+
 
 if __name__ == "__main__":
     unittest.main()

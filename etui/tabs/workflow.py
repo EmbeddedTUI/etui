@@ -444,6 +444,12 @@ class WorkflowTab(BusMixin, Vertical):
         )
         prev_btn.disabled = engine.current_index == 0
 
+    @property
+    def active_operation_detached(self) -> bool:
+        """True when the busy operation runs in another tab (the console
+        command) and so must survive the user navigating away from Workflow."""
+        return getattr(self, "_current_operation_name", None) == "console-command"
+
     # ------------------------------------------------------------ execution
     def _start_operation(self, coro, name: str) -> None:
         if self.busy:
