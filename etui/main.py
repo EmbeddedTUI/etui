@@ -1,9 +1,13 @@
 # Copyright (c) 2026 Pawel Wodnicki
 # Copyright (c) 2026 32bitmico LLC
 
+import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger("etui.main")
 
 from .version import COPYRIGHT  # noqa: F401 — re-exported for callers
 
@@ -31,7 +35,7 @@ if __package__:
     from .tabs.workflow import WorkflowTab
     from .settings import SettingsManager
     from .bus import MessageBus
-    from .bus_contract import SVC_NAV_ACTIVATE
+    from .bus_contract import SVC_NAV_ACTIVATE, TOPIC_TAB_ACTIVATED, TOPIC_TAB_DEACTIVATED, TabEvent, SVC_SETTINGS_GET, SVC_SETTINGS_SET
 else:
     from tabs.help import HelpTab, OpenDocFile
     from tabs.about import AboutTab
@@ -50,7 +54,7 @@ else:
     from tabs.workflow import WorkflowTab
     from settings import SettingsManager
     from bus import MessageBus
-    from bus_contract import SVC_NAV_ACTIVATE
+    from bus_contract import SVC_NAV_ACTIVATE, TOPIC_TAB_ACTIVATED, TOPIC_TAB_DEACTIVATED, TabEvent, SVC_SETTINGS_GET, SVC_SETTINGS_SET
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -73,11 +77,29 @@ class EtuiApp(App):
         self.bus = MessageBus()
         # App-owned services that don't belong to any single tab.
         self.bus.provide(SVC_NAV_ACTIVATE, self._svc_activate_tab)
+        self.bus.provide(SVC_SETTINGS_GET, self._svc_settings_get)
+        self.bus.provide(SVC_SETTINGS_SET, self._svc_settings_set)
+
+        # Discover plugins
+        if __package__:
+            from .plugins import PluginManager
+        else:
+            from plugins import PluginManager
+        self.plugins = PluginManager()
+        self.plugins.discover()
 
     async def _svc_activate_tab(self, tab_id: str) -> None:
         """Bus service: switch the active tab. Lets tabs request navigation
         without reaching into TabbedContent themselves."""
         self.query_one(TabbedContent).active = tab_id
+
+    async def _svc_settings_get(self, section: str, key: str, default: Any = None) -> Any:
+        """Bus service: get a settings value."""
+        return self.settings_manager.get(section, key, default)
+
+    async def _svc_settings_set(self, section: str, key: str, value: Any) -> None:
+        """Bus service: set a settings value."""
+        self.settings_manager.set(section, key, value)
 
 
     CSS = """
@@ -220,6 +242,48 @@ class EtuiApp(App):
                 action="restore_workspace",
             )
 
+        # Mount plugin tabs
+        tabs = self.query_one(TabbedContent)
+        for lp in self.plugins.loaded:
+            try:
+                widget = lp.plugin.create_widget()
+
+                # Instantiate and assign ScopedBus
+                if __package__:
+                    from .plugins import ScopedBus
+                else:
+                    from plugins import ScopedBus
+                lp.scoped_bus = ScopedBus(self.bus, lp.spec.id)
+                widget._bus = lp.scoped_bus
+
+                target = lp.spec.after
+                has_target = False
+                if target:
+                    try:
+                        tabs.get_pane(target)
+                        has_target = True
+                    except Exception:
+                        pass
+
+                kwargs = {"after": target} if has_target else {}
+                await tabs.add_pane(TabPane(lp.spec.title, widget, id=lp.spec.id), **kwargs)
+
+                # Register help document if specified and it exists
+                if lp.spec.help_doc and lp.spec.help_doc.is_file():
+                    if self.bus.has("help.add_entry"):
+                        await self.bus.call("help.add_entry", title=lp.spec.title, path=lp.spec.help_doc)
+
+                logger.info("mounted plugin tab %s (%s)", lp.spec.id, lp.dist)
+            except Exception as exc:
+                self.plugins.errors.append((lp.name, f"mount failed: {exc!r}"))
+                logger.exception("failed to mount plugin %s", lp.spec.id)
+
+        if self.plugins.errors:
+            self.notify(
+                f"{len(self.plugins.errors)} plugin(s) failed to load; see logs",
+                severity="error",
+            )
+
     def compose(self) -> ComposeResult:
         yield Header()
         with TabbedContent(initial="files"):
@@ -308,6 +372,12 @@ class EtuiApp(App):
         pane_id = event.pane.id
         old_pane_id = getattr(self, "_last_active_tab", None)
         self._last_active_tab = pane_id
+        
+        # Emit tab change lifecycle events on the bus only if changed
+        if old_pane_id != pane_id:
+            if old_pane_id:
+                self.bus.emit(TOPIC_TAB_DEACTIVATED, TabEvent(pane_id=old_pane_id), source="app")
+            self.bus.emit(TOPIC_TAB_ACTIVATED, TabEvent(pane_id=pane_id), source="app")
         
         # Show main-input only for serial tab, hide for all others
         try:
@@ -435,17 +505,6 @@ class EtuiApp(App):
             except Exception:
                 pass
 
-        if old_pane_id == "workflow" and pane_id != "workflow":
-            try:
-                workflow_tab = self.query_one(WorkflowTab)
-                if workflow_tab.busy and not workflow_tab.active_operation_detached:
-                    self.run_worker(
-                        workflow_tab.cancel_active_operation(),
-                        name="cancel-workflow-operation",
-                        exit_on_error=False,
-                    )
-            except Exception:
-                pass
 
         if old_pane_id == "tools" and pane_id != "tools":
             try:

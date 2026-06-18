@@ -41,7 +41,7 @@ __all__ = [
 class TabSpec:
     """Specification metadata for a tab plugin."""
 
-    id: str  # MUST be "plugin.<slug>" (validated by host)
+    id: str  # MUST be "plugin-<slug>" (validated by host)
     title: str
     order: int = 1000  # sort hint; built-ins reserve order < 1000
     after: str | None = None  # optional pane id to place this after
@@ -98,10 +98,20 @@ class CancelOnLeaveMixin:
         # event.payload has a pane_id attribute representing the deactivated tab ID
         payload = getattr(event, "payload", None)
         pane_id = getattr(payload, "pane_id", None) if payload else None
+        if not pane_id:
+            return
 
-        widget_id = getattr(self, "id", None)
+        # Check if this widget or any of its ancestors match the deactivated pane_id
+        matched = False
+        node = self
+        while node is not None:
+            if getattr(node, "id", None) == pane_id:
+                matched = True
+                break
+            node = getattr(node, "parent", None)
+
         is_busy = getattr(self, "busy", False)
 
-        if pane_id == widget_id and is_busy and not self.survives_leave():
+        if matched and is_busy and not self.survives_leave():
             if hasattr(self, "cancel_active_operation"):
                 await self.cancel_active_operation()

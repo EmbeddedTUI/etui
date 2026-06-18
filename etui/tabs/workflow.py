@@ -36,6 +36,7 @@ if __package__:
     from ..workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
     from ..bus import BusMixin, NoProvider, RpcError
     from ..bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN
+    from ..plugin import CancelOnLeaveMixin
 else:  # pragma: no cover - fallback for non-package execution
     from workflow.engine import ICONS, StepState, WorkflowEngine
     from workflow.loader import WorkflowMeta, builtin_dir, list_workflows, load
@@ -43,6 +44,7 @@ else:  # pragma: no cover - fallback for non-package execution
     from workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
     from bus import BusMixin, NoProvider, RpcError
     from bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN
+    from plugin import CancelOnLeaveMixin
 
 
 class ConfirmDialog(ModalScreen[bool]):
@@ -149,7 +151,7 @@ class PasswordDialog(ModalScreen[str | None]):
 _SUDO_RE = re.compile(r"\bsudo\b(?!\s+-[AnKk])")
 
 
-class WorkflowTab(BusMixin, Vertical):
+class WorkflowTab(CancelOnLeaveMixin, BusMixin, Vertical):
     """YAML-defined, multi-step command workflow runner."""
 
     DEFAULT_CSS = """
@@ -263,12 +265,17 @@ class WorkflowTab(BusMixin, Vertical):
             yield Button("Prev", id="btn-workflow-prev", disabled=True)
 
     def on_mount(self) -> None:
+        super().on_mount()
         self._sync_controls()
         if self.repo_path is None:
             self._scan_workflows()
 
     async def on_unmount(self) -> None:
         await self.cancel_active_operation()
+        super().on_unmount()
+
+    def survives_leave(self) -> bool:
+        return self.active_operation_detached
 
     # -------------------------------------------------------- repo context
     async def change_repository(self, repo_path: Path) -> None:

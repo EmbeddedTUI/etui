@@ -183,6 +183,14 @@ class BusMixin:
 
     @property
     def bus(self) -> MessageBus:
+        # Walk up parent hierarchy to locate a scoped bus (e.g. from a plugin)
+        node = self
+        while node is not None:
+            scoped = getattr(node, "_bus", None)
+            if scoped is not None:
+                return scoped
+            node = getattr(node, "parent", None)
+
         app = self.app  # type: ignore[attr-defined]
         bus = getattr(app, "bus", None)
         if bus is None:
