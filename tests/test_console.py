@@ -16,6 +16,37 @@ class ConsoleBasicTests(unittest.TestCase):
     def test_console_starts_in_process_working_directory(self) -> None:
         self.assertEqual(ConsoleTab().cwd, Path.cwd())
 
+    def test_marker_detected_through_interleaved_escapes(self) -> None:
+        """A completion marker must resolve even when escape sequences from the
+        shell/sudo/apt interleave between the marker and its exit code."""
+        import asyncio
+
+        term = TerminalWidget()
+        event = asyncio.Event()
+        cmd = {"marker": b"__ETUI_CMD_DONE_1__", "event": event, "exit_code": -1}
+        term._pending_commands.append(cmd)
+        # Color reset + OSC title sequences land between the marker and "0".
+        term._read_buffer.extend(
+            b"0 upgraded.\r\n__ETUI_CMD_DONE_1__\x1b[0m \x1b]0;title\x07 0\r\n$ "
+        )
+        term._check_command_markers()
+        self.assertTrue(event.is_set())
+        self.assertEqual(cmd["exit_code"], 0)
+        self.assertEqual(len(term._pending_commands), 0)
+
+    def test_echoed_input_marker_does_not_false_match(self) -> None:
+        """The echoed `__ETUI_CMD_DONE_""1__` input must not resolve the command."""
+        import asyncio
+
+        term = TerminalWidget()
+        event = asyncio.Event()
+        cmd = {"marker": b"__ETUI_CMD_DONE_1__", "event": event, "exit_code": -1}
+        term._pending_commands.append(cmd)
+        term._read_buffer.extend(b'sleep 1; echo __ETUI_CMD_DONE_""1__ $?\r\n')
+        term._check_command_markers()
+        self.assertFalse(event.is_set())
+        self.assertEqual(len(term._pending_commands), 1)
+
 
 @unittest.skipUnless(os.name == "posix", "terminal requires a POSIX PTY")
 class ConsoleTerminalTests(unittest.IsolatedAsyncioTestCase):

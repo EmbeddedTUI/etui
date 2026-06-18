@@ -213,6 +213,16 @@ class WorkflowTabTestApp(App):
         yield WorkflowTab()
 
 
+class WorkflowConsoleTestApp(App):
+    """App that mounts both tabs so Sync can resolve a real pending command."""
+
+    def compose(self) -> ComposeResult:
+        from etui.tabs.console import ConsoleTab
+
+        yield WorkflowTab()
+        yield ConsoleTab()
+
+
 class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_sync_button_states_and_press(self) -> None:
         from textual.widgets import Button
@@ -227,8 +237,60 @@ class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
             tab._sync_controls()
             self.assertFalse(sync_btn.disabled)
 
+    async def test_workflow_sync_resolves_pending_console_command(self) -> None:
+        """Pressing the Workflow Sync button must actually finish a hung command."""
+        import asyncio
+        from textual.widgets import Button
+
+        app = WorkflowConsoleTestApp()
+        async with app.run_test() as pilot:
+            tab = app.query_one(WorkflowTab)
+            term = app.query_one("#console-terminal")
+            await pilot.pause()
+
+            # Kick off a command that never completes on its own.
+            run_task = asyncio.ensure_future(term.run_command("sleep 60"))
+            for _ in range(20):
+                await pilot.pause()
+                if term._pending_commands:
+                    break
+            self.assertEqual(len(term._pending_commands), 1)
+
+            tab.busy = True
+            tab._current_operation_name = "console-command"
+            tab._sync_controls()
+            self.assertFalse(tab.query_one("#btn-workflow-sync", Button).disabled)
+
             await pilot.click("#btn-workflow-sync")
             await pilot.pause()
+
+            self.assertEqual(len(term._pending_commands), 0)
+            self.assertEqual(await run_task, 0)
+
+    async def test_console_force_complete_button_resolves(self) -> None:
+        """The Console tab's own Force Complete button resolves a hung command."""
+        import asyncio
+        from etui.tabs.console import ConsoleTab
+
+        app = WorkflowConsoleTestApp()
+        async with app.run_test() as pilot:
+            console = app.query_one(ConsoleTab)
+            term = app.query_one("#console-terminal")
+            console.show_sync_button(True)
+            await pilot.pause()
+
+            run_task = asyncio.ensure_future(term.run_command("sleep 60"))
+            for _ in range(20):
+                await pilot.pause()
+                if term._pending_commands:
+                    break
+            self.assertEqual(len(term._pending_commands), 1)
+
+            await pilot.click("#btn-console-sync")
+            await pilot.pause()
+
+            self.assertEqual(len(term._pending_commands), 0)
+            self.assertEqual(await run_task, 0)
 
     async def test_skip_aborted_step(self) -> None:
         from textual.widgets import Button

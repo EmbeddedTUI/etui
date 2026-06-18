@@ -762,6 +762,7 @@ class WorkflowTab(Vertical):
         log.write(f"[bold]── Step: {escape(step.title)} (Console) ──[/bold]")
         log.write(f"[bold cyan]$ {escape(combined)}[/bold cyan]")
 
+        console.show_sync_button(True)
         try:
             ret = await console.run_command(combined)
         except asyncio.CancelledError:
@@ -771,6 +772,7 @@ class WorkflowTab(Vertical):
             raise
         finally:
             self.busy = False
+            console.show_sync_button(False)
 
         if ret != 0:
             policy = engine.step_failed(ret)
@@ -818,20 +820,12 @@ class WorkflowTab(Vertical):
             return
         if bid == "btn-workflow-sync":
             try:
-                if __package__:
-                    from .console import ConsoleTab
-                else:
-                    from tabs.console import ConsoleTab
-                console = self.app.query_one(ConsoleTab)
-                term = console.query_one("#console-terminal")
+                term = self.app.query_one("#console-terminal")
                 term._resolve_pending_commands(0)
-            except Exception:
-                try:
-                    with open("sync_error.log", "w") as f:
-                        import traceback
-                        traceback.print_exc(file=f)
-                except Exception:
-                    pass
+            except Exception as exc:  # pragma: no cover - defensive
+                self.query_one("#workflow-step-output", RichLog).write(
+                    f"[red]Sync failed: {escape(str(exc))}[/red]"
+                )
             return
         if bid == "btn-workflow-reload":
             await self.cancel_active_operation()

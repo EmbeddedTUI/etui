@@ -19,9 +19,10 @@ from pathlib import Path
 from rich.segment import Segment
 from rich.style import Style
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.strip import Strip
 from textual.widget import Widget
+from textual.widgets import Button
 
 if os.name == "posix":
     import fcntl
@@ -30,6 +31,18 @@ if os.name == "posix":
     import termios
 
 import pyte
+
+
+# Terminal escape sequences that can interleave with shell output (OSC title /
+# shell-integration sequences, CSI cursor/colour codes, single-char escapes).
+# Stripped before scanning for command-completion markers so that control bytes
+# emitted by sudo, apt progress redraws, or VTE shell integration can't split a
+# marker and defeat the match.
+_ANSI_RE = re.compile(
+    rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC ... BEL or ST
+    rb"|\x1b\[[0-9;?]*[ -/]*[@-~]"          # CSI sequences
+    rb"|\x1b[@-Z\\-_]"                       # two-byte escapes
+)
 
 
 # pyte colour names → Rich colour names (None == terminal default).
@@ -207,22 +220,25 @@ class TerminalWidget(Widget, can_focus=True):
     def _check_command_markers(self) -> None:
         if not self._pending_commands:
             return
+        # Match against a copy with escape sequences removed: control bytes from
+        # sudo/apt/shell-integration can otherwise interleave with the marker and
+        # defeat a raw match. The echoed input carries `__ETUI_CMD_DONE_""N__`
+        # (with embedded quotes), so it never matches the bare marker.
+        clean = _ANSI_RE.sub(b"", bytes(self._read_buffer))
         resolved_indices = []
         for i, cmd_info in enumerate(self._pending_commands):
             marker = cmd_info["marker"]
-            pattern = re.compile(re.escape(marker) + b"\\s+(-?\\d+)")
-            match = pattern.search(self._read_buffer)
+            match = re.search(re.escape(marker) + b"\\s+(-?\\d+)", clean)
             if match:
-                try:
-                    exit_code = int(match.group(1))
-                    cmd_info["exit_code"] = exit_code
-                    cmd_info["event"].set()
-                    resolved_indices.append(i)
-                    del self._read_buffer[:match.end()]
-                except ValueError:  # pragma: no cover - defensive
-                    pass
-        for index in sorted(resolved_indices, reverse=True):
-            self._pending_commands.pop(index)
+                cmd_info["exit_code"] = int(match.group(1))
+                cmd_info["event"].set()
+                resolved_indices.append(i)
+        if resolved_indices:
+            # Commands run sequentially, so once any pending marker resolves the
+            # buffer up to here is consumed; clear it to avoid re-matching.
+            self._read_buffer.clear()
+            for index in sorted(resolved_indices, reverse=True):
+                self._pending_commands.pop(index)
 
     async def run_command(self, command: str) -> int:
         """Type a command into the shell, wait for it to complete, and return exit code."""
@@ -238,7 +254,13 @@ class TerminalWidget(Widget, can_focus=True):
         exit_var = "$status" if "fish" in self._shell else "$?"
         echo_marker = f"__ETUI_CMD_DONE_\"\"{marker}__"
         self.write(f"{command}; echo {echo_marker} {exit_var}\r".encode())
-        await event.wait()
+        try:
+            await event.wait()
+        finally:
+            # On cancellation (e.g. workflow Abort) drop the stale pending entry
+            # so a later marker can't resolve a command nobody is waiting on.
+            if cmd_info in self._pending_commands:
+                self._pending_commands.remove(cmd_info)
         return cmd_info["exit_code"]
 
     def write(self, data: bytes) -> None:
@@ -348,6 +370,14 @@ class ConsoleTab(Vertical):
     ConsoleTab {
         height: 1fr;
     }
+    ConsoleTab #console-actionbar {
+        height: auto;
+        align: right middle;
+    }
+    ConsoleTab #btn-console-sync {
+        display: none;
+        margin: 0 1;
+    }
     """
 
     def __init__(self) -> None:
@@ -355,7 +385,31 @@ class ConsoleTab(Vertical):
         self._cwd = Path.cwd()
 
     def compose(self) -> ComposeResult:
+        with Horizontal(id="console-actionbar"):
+            yield Button(
+                "Force Complete",
+                id="btn-console-sync",
+                variant="warning",
+                tooltip="Mark the command a workflow step is waiting on as finished (exit 0).",
+            )
         yield TerminalWidget(initial_cwd=self._cwd, id="console-terminal")
+
+    def show_sync_button(self, visible: bool) -> None:
+        """Reveal the Force Complete button while a step waits on this terminal."""
+        try:
+            self.query_one("#btn-console-sync", Button).display = visible
+        except Exception:
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id != "btn-console-sync":
+            return
+        event.stop()
+        try:
+            term = self.query_one(TerminalWidget)
+        except Exception:
+            return
+        term._resolve_pending_commands(0)
 
     @property
     def cwd(self) -> Path:
