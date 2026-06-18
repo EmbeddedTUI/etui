@@ -164,6 +164,9 @@ class MessageBus:
         except asyncio.TimeoutError as exc:
             log.debug("call service=%s -> timeout after %ss", service, timeout)
             raise RpcTimeout(service) from exc
+        except asyncio.CancelledError:
+            log.debug("call service=%s -> cancelled", service)
+            raise
         except Exception as exc:
             log.debug("call service=%s -> raised %s: %s", service, type(exc).__name__, exc)
             raise

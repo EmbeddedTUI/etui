@@ -10,11 +10,14 @@ exactly as in a normal terminal.
 """
 
 import asyncio
+import logging
 import os
 import re
 import shlex
 import signal
 from pathlib import Path
+
+log = logging.getLogger("etui.console")
 
 from rich.segment import Segment
 from rich.style import Style
@@ -227,6 +230,9 @@ class TerminalWidget(Widget, can_focus=True):
         self._check_command_markers()
 
     def _resolve_pending_commands(self, exit_code: int) -> None:
+        log.debug(
+            "resolve_pending exit=%d count=%d", exit_code, len(self._pending_commands)
+        )
         for cmd_info in self._pending_commands:
             cmd_info["exit_code"] = exit_code
             cmd_info["event"].set()
@@ -248,6 +254,15 @@ class TerminalWidget(Widget, can_focus=True):
                 cmd_info["exit_code"] = int(match.group(1))
                 cmd_info["event"].set()
                 resolved_indices.append(i)
+                log.debug("marker matched %r exit=%d", marker, cmd_info["exit_code"])
+            elif log.isEnabledFor(logging.DEBUG) and marker in clean:
+                # Marker text is present but the exit-code regex didn't match:
+                # dump the surrounding bytes so we can see what interleaves.
+                idx = clean.rfind(marker)
+                log.debug(
+                    "marker %r present but UNMATCHED; context=%r",
+                    marker, clean[idx:idx + 48],
+                )
         if resolved_indices:
             # Commands run sequentially, so once any pending marker resolves the
             # buffer up to here is consumed; clear it to avoid re-matching.
@@ -266,6 +281,7 @@ class TerminalWidget(Widget, can_focus=True):
             "exit_code": -1
         }
         self._pending_commands.append(cmd_info)
+        log.debug("run_command marker=%s command=%r", cmd_info["marker"], command)
         exit_var = "$status" if "fish" in self._shell else "$?"
         echo_marker = f"__ETUI_CMD_DONE_\"\"{marker}__"
         self.write(f"{command}; echo {echo_marker} {exit_var}\r".encode())
