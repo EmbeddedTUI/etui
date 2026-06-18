@@ -68,9 +68,9 @@ class ScopedBus:
     async def call(self, service: str, *, timeout: float | None = 30.0, **kwargs) -> Any:
         """Invoke a service provider. Intercepts and prefixes plugin-scoped settings calls."""
         if service in ("settings.get", "settings.set") and "section" in kwargs:
-            # Namespace settings section key to plugin.<dotted_id>.<section>
+            # Namespace settings section key to <dotted_id>.<section>
             bus_id = self._id.replace("-", ".")
-            kwargs["section"] = f"plugin.{bus_id}.{kwargs['section']}"
+            kwargs["section"] = f"{bus_id}.{kwargs['section']}"
         return await self._bus.call(service, timeout=timeout, **kwargs)
 
     def dispose_all(self) -> None:

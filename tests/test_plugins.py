@@ -160,7 +160,7 @@ class ScopedBusTests(unittest.IsolatedAsyncioTestCase):
 
         res = await sb.call("settings.get", section="my_sec", key="my_key")
         self.assertEqual(res, "val")
-        self.assertEqual(received_kwargs["section"], "plugin.plugin.good.my_sec")
+        self.assertEqual(received_kwargs["section"], "plugin.good.my_sec")
         self.assertEqual(received_kwargs["key"], "my_key")
 
     def test_scoped_bus_dispose_all(self) -> None:
@@ -338,10 +338,38 @@ class PluginMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
             # Set a setting through ScopedBus
             await sb.call("settings.set", section="my_sec", key="my_key", value="hello_value")
 
-            # Verify it got saved in actual settings manager under plugin.plugin.hello.my_sec
-            val = app.settings_manager.get("plugin.plugin.hello.my_sec", "my_key")
+            # Verify it got saved in actual settings manager under plugin.hello.my_sec
+            val = app.settings_manager.get("plugin.hello.my_sec", "my_key")
             self.assertEqual(val, "hello_value")
 
             # Retrieve it back through ScopedBus
             retrieved = await sb.call("settings.get", section="my_sec", key="my_key")
             self.assertEqual(retrieved, "hello_value")
+
+    @patch("etui.plugins._entry_points")
+    async def test_plugin_cleanup_on_app_unmount(self, mock_eps: MagicMock) -> None:
+        from etui.main import EtuiApp
+        from etui.settings import SettingsManager
+        import tempfile
+
+        mock_eps.return_value = [
+            MockEntryPoint("mock_plugin", MockAppPlugin),
+        ]
+
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = Path(d) / "settings.yaml"
+            app = EtuiApp()
+            app.settings_manager = SettingsManager(path=settings_path)
+            app.workspace_root = app.load_workspace_root()
+
+            async with app.run_test() as pilot:
+                lp = app.plugins.loaded[0]
+                self.assertIsNotNone(lp.scoped_bus)
+
+                mock_widget = app.query_one(MockPluginWidget)
+                mock_widget.bus.subscribe("plugin-dummy-topic", lambda e: None)
+
+                self.assertEqual(len(lp.scoped_bus._disposers), 1)
+
+            # After app teardown, check disposers are cleaned up
+            self.assertEqual(len(lp.scoped_bus._disposers), 0)

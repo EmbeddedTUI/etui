@@ -284,6 +284,15 @@ class EtuiApp(App):
                 severity="error",
             )
 
+    def on_unmount(self) -> None:
+        """Clean up plugin bus registrations on app teardown."""
+        for lp in self.plugins.loaded:
+            if lp.scoped_bus:
+                lp.scoped_bus.dispose_all()
+        super_unmount = getattr(super(), "on_unmount", None)
+        if super_unmount is not None:
+            super_unmount()
+
     def compose(self) -> ComposeResult:
         yield Header()
         with TabbedContent(initial="files"):
