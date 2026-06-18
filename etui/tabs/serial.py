@@ -51,7 +51,7 @@ class SerialTab(Vertical):
         port_select = self.query_one("#serial-port", Select)
         baud_select = self.query_one("#serial-baud", Select)
         
-        if port_select.value is Select.BLANK:
+        if port_select.value in (Select.BLANK, Select.NULL):
             self.app.notify("Please select a serial port", variant="error")
             return
 

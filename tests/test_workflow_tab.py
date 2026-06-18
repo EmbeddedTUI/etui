@@ -448,6 +448,41 @@ class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(workflow_tab.busy)
                 self.assertTrue(workflow_tab._operation_worker.is_cancelled)
 
+    async def test_reload_workflow_empty_and_valid(self) -> None:
+        """Clicking reload button when no workflow is selected or when a valid one is selected."""
+        from textual.widgets import Select
+        from etui.workflow.loader import builtin_dir, list_workflows
+
+        app = WorkflowTabTestApp()
+        async with app.run_test() as pilot:
+            tab = app.query_one(WorkflowTab)
+            select = tab.query_one("#workflow-select", Select)
+            
+            # 1. No workflow selected: select.value should be Select.NULL or Select.BLANK
+            self.assertTrue(select.value in (Select.BLANK, Select.NULL))
+            self.assertIsNone(tab.workflow)
+            
+            # Click reload. It should not fail or try to load a Select.NULL file.
+            await pilot.click("#btn-workflow-reload")
+            await pilot.pause()
+            self.assertIsNone(tab.workflow)
+            
+            # 2. Select a valid workflow and reload it
+            metas = list_workflows(builtin_dir())
+            if metas:
+                valid_path = metas[0].path
+                # Simulate selection change
+                select.value = str(valid_path)
+                await pilot.pause()
+                self.assertIsNotNone(tab.workflow)
+                
+                # Clear workflow model to see if reload reloads it
+                tab.workflow = None
+                
+                # Click reload
+                await pilot.click("#btn-workflow-reload")
+                await pilot.pause()
+                self.assertIsNotNone(tab.workflow)
 
 
 if __name__ == "__main__":

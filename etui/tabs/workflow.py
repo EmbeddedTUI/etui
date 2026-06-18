@@ -318,7 +318,7 @@ class WorkflowTab(BusMixin, Vertical):
 
     # -------------------------------------------------------- load / select
     async def on_select_changed(self, event: Select.Changed) -> None:
-        if event.value is Select.BLANK:
+        if event.value in (Select.BLANK, Select.NULL):
             return
         await self.load_workflow(Path(str(event.value)))
 
@@ -833,9 +833,15 @@ class WorkflowTab(BusMixin, Vertical):
             return
         if bid == "btn-workflow-reload":
             await self.cancel_active_operation()
-            self._scan_workflows()
             path = self._current_path()
+            self._scan_workflows()
             if path is not None:
+                try:
+                    select = self.query_one("#workflow-select", Select)
+                    if str(path) in [str(m.path) for m in self.metas]:
+                        select.value = str(path)
+                except Exception:
+                    pass
                 await self.load_workflow(path)
             return
         if self.busy or self.engine is None:
@@ -865,6 +871,6 @@ class WorkflowTab(BusMixin, Vertical):
             value = self.query_one("#workflow-select", Select).value
         except Exception:
             return None
-        if value is Select.BLANK:
+        if value in (Select.BLANK, Select.NULL):
             return None
         return Path(str(value))
