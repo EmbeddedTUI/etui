@@ -34,6 +34,14 @@ dependencies = [
     "packaging>=22.0",
     "pyyaml>=6.0.3",
     "pyte>=0.8.2",
+]
+
+# Optional, independently-released tab plugins. These are local sibling path
+# deps for development only — they are NOT part of the core runtime requirements,
+# so the release/package build (CI) does not need the sibling checkouts present.
+# Install locally with:  pdm install -G plugins   (or `pdm add ./etui_mqtt ...`).
+[project.optional-dependencies]
+plugins = [
     "etui-mqtt @ file:///${PROJECT_ROOT}/../etui_mqtt",
     "etui-email @ file:///${PROJECT_ROOT}/../etui_email",
 ]
