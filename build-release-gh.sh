@@ -18,6 +18,28 @@ if ! gh auth status &> /dev/null; then
     exit 1
 fi
 
+# Read the canonical version from pyproject.toml ([project] table).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYPROJECT="$SCRIPT_DIR/pyproject.toml"
+
+get_pyproject_version() {
+    [ -f "$PYPROJECT" ] || return 1
+    awk '
+        /^\[project\]/ { inproj=1; next }
+        /^\[/          { inproj=0 }
+        inproj && /^[[:space:]]*version[[:space:]]*=/ {
+            gsub(/^[^"]*"/, ""); gsub(/".*$/, ""); print; exit
+        }
+    ' "$PYPROJECT"
+}
+
+PYPROJECT_VERSION=$(get_pyproject_version)
+if [ -z "$PYPROJECT_VERSION" ]; then
+    echo "Error: could not read version from $PYPROJECT"
+    exit 1
+fi
+echo "Version from pyproject.toml: $PYPROJECT_VERSION"
+
 BUMP=""
 VERSION=""
 
@@ -32,22 +54,9 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
-# Resolve semantic versioning bump if requested
+# Resolve semantic versioning bump if requested, based on the pyproject version.
 if [ -n "$BUMP" ]; then
-    # Fetch latest tag from GitHub releases
-    LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)
-    if [ -z "$LATEST_TAG" ]; then
-        # Local tag fallback
-        LATEST_TAG=$(git tag --sort=-v:refname | head -n 1 2>/dev/null || true)
-    fi
-    if [ -z "$LATEST_TAG" ]; then
-        LATEST_TAG="v0.0.0"
-    fi
-    echo "Latest release tag found: $LATEST_TAG"
-
-    # Strip leading 'v'
-    CLEAN_TAG=${LATEST_TAG#v}
-    IFS='.' read -r MAJOR MINOR PATCH <<< "$CLEAN_TAG"
+    IFS='.' read -r MAJOR MINOR PATCH <<< "$PYPROJECT_VERSION"
     MAJOR=${MAJOR:-0}
     MINOR=${MINOR:-0}
     PATCH=${PATCH:-0}
@@ -67,24 +76,12 @@ if [ -n "$BUMP" ]; then
             ;;
     esac
     VERSION="v$MAJOR.$MINOR.$PATCH"
-    echo "Semantic bump ($BUMP) calculated new version: $VERSION"
+    echo "Semantic bump ($BUMP) from pyproject $PYPROJECT_VERSION -> $VERSION"
 fi
 
-# Fallback to interactive prompt if no version was passed or calculated
+# Fallback to interactive prompt, defaulting to the pyproject.toml version.
 if [ -z "$VERSION" ]; then
-    # Calculate a default patch bump if possible
-    LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)
-    if [ -z "$LATEST_TAG" ]; then
-        LATEST_TAG=$(git tag --sort=-v:refname | head -n 1 2>/dev/null || true)
-    fi
-    if [ -n "$LATEST_TAG" ]; then
-        CLEAN_TAG=${LATEST_TAG#v}
-        IFS='.' read -r MA MI PA <<< "$CLEAN_TAG"
-        SUGGESTED_TAG="v${MA:-0}.${MI:-0}.$((PA + 1))"
-    else
-        SUGGESTED_TAG="v0.1.0"
-    fi
-
+    SUGGESTED_TAG="v$PYPROJECT_VERSION"
     read -p "Enter version tag to release [default: $SUGGESTED_TAG]: " VERSION
     VERSION=$(echo "$VERSION" | xargs)
     if [ -z "$VERSION" ]; then
