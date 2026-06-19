@@ -35,7 +35,13 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Exclude the phantom top-level `workflow` module that only exists via the
+    # non-package fallback import in etui/tabs/workflow.py
+    # (`from workflow.engine import ...`). The frozen app always uses the
+    # `etui.workflow` package path, so it is dead weight here — and the bundled
+    # PyInstaller contrib hook-workflow.py would otherwise try to read metadata
+    # for a non-existent `workflow` distribution and abort the build.
+    excludes=['workflow'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
