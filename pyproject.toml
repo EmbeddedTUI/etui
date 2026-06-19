@@ -34,6 +34,7 @@ dependencies = [
     "packaging>=22.0",
     "pyyaml>=6.0.3",
     "pyte>=0.8.2",
+    "etui-mqtt @ file:///${PROJECT_ROOT}/../etui-mqtt",
 ]
 
 [project.urls]
