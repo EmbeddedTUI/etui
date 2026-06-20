@@ -8,4 +8,4 @@ pdm run etui --self-test
 
 echo ""
 echo "=== pytest ==="
-pdm run pytest tests/ etui/self_test.py "$@"
+pdm run pytest -p no:xonsh tests/ etui/self_test.py "$@"

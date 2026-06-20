@@ -30,7 +30,6 @@ if __package__:
     from .tabs.git import GitTab, RepositoryChanged
     from .tabs.github import GitHubTab
     from .tabs.cmake import CMakeTab
-    from .tabs.tools import ToolsTab
     from .tabs.settings import SettingsTab
     from .tabs.workflow import WorkflowTab
     from .settings import SettingsManager
@@ -68,7 +67,6 @@ else:
     from tabs.git import GitTab, RepositoryChanged
     from tabs.github import GitHubTab
     from tabs.cmake import CMakeTab
-    from tabs.tools import ToolsTab
     from tabs.settings import SettingsTab
     from tabs.workflow import WorkflowTab
     from settings import SettingsManager
@@ -104,12 +102,7 @@ class EtuiApp(App):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        if __package__:
-            from .tabs.tools import ToolRegistry
-        else:
-            from tabs.tools import ToolRegistry
         self.settings_manager = SettingsManager()
-        self.tool_registry = ToolRegistry(self)
         self._last_active_tab = "files"
         self.workspace_root = self.load_workspace_root()
         self.bus = MessageBus()
@@ -354,15 +347,6 @@ class EtuiApp(App):
                 yield FilesTab()
             with TabPane("Console", id="console"):
                 yield ConsoleTab()
-            with TabPane("Tools", id="tools"):
-                yield ToolsTab(
-                    [
-                        Path(path)
-                        for path in self.settings_manager.get(
-                            "tools", "custom_paths", []
-                        )
-                    ]
-                )
             with TabPane("Git", id="git"):
                 yield GitTab()
             with TabPane("GitHub", id="github"):
@@ -498,7 +482,7 @@ class EtuiApp(App):
                 self.query_one("#workflow-select").focus()
             except Exception:
                 pass
-        elif pane_id == "tools":
+        elif pane_id == "plugin-tools":
             try:
                 self.query_one("#tools-table").focus()
             except Exception:
@@ -563,17 +547,7 @@ class EtuiApp(App):
                 pass
 
 
-        if old_pane_id == "tools" and pane_id != "tools":
-            try:
-                tools_tab = self.query_one(ToolsTab)
-                if tools_tab.busy:
-                    self.run_worker(
-                        tools_tab.cancel_active_operation(),
-                        name="cancel-tools-operation",
-                        exit_on_error=False,
-                    )
-            except Exception:
-                pass
+
 
     def on_command_message(self, message: CommandMessage) -> None:
         tabs = self.query_one(TabbedContent)

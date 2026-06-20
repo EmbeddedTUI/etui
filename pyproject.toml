@@ -41,7 +41,9 @@ dependencies = [
 # so the release/package build (CI) does not need the sibling checkouts present.
 # Install locally with:  pdm install -G plugins   (or `pdm add ./etui_mqtt ...`).
 [project.optional-dependencies]
-default-tabs = []
+default-tabs = [
+    "etui-tools @ file:///${PROJECT_ROOT}/plugins/etui-tools",
+]
 plugins = [
     "etui-mqtt @ file:///${PROJECT_ROOT}/../etui_mqtt",
     "etui-email @ file:///${PROJECT_ROOT}/../etui_email",
@@ -56,6 +58,11 @@ etui-run-plugin = "etui.dev.run_plugin:main"
 
 [tool.pdm.build]
 includes = ["etui/"]
+
+[tool.pdm.workspace]
+members = [
+    "plugins/*",
+]
 
 [dependency-groups]
 dev = [

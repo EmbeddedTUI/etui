@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
 
-from etui.tabs.tools import ToolService, ToolsTab, ToolDefinition, ExecutableProbe, ToolResult, ToolState, ExecutableResult
+from etui_tools.tab import ToolService, ToolsTab, ToolDefinition, ExecutableProbe, ToolResult, ToolState, ExecutableResult
 
 class ToolsTabUnitTests(unittest.IsolatedAsyncioTestCase):
     def test_package_manager_detection_and_command_building(self) -> None:
@@ -26,7 +26,7 @@ class ToolsTabUnitTests(unittest.IsolatedAsyncioTestCase):
         
         # Build command plan
         # We manually inject the package plan as a PackagePlan subclass or dictionary
-        from etui.tabs.tools import PackagePlan
+        from etui_tools.tab import PackagePlan
         def_tool = ToolDefinition(
             tool_id="mock-tool",
             display_name="Mock Tool",
@@ -109,7 +109,8 @@ class ToolsTabUnitTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Target compilation check failed", err)
 
     def test_tool_registry_and_warning_banner(self) -> None:
-        from etui.tabs.tools import ToolRegistry, ToolWarningBanner, TOOL_BY_ID
+        from etui_tools.tab import ToolRegistry, TOOL_BY_ID
+        from etui.plugin import ToolWarningBanner
         
         # Mock application object
         app = MagicMock()
@@ -145,16 +146,17 @@ class ToolsTabUnitTests(unittest.IsolatedAsyncioTestCase):
         with unittest.mock.patch.object(ToolWarningBanner, "app", new_callable=unittest.mock.PropertyMock) as mock_app:
             mock_app.return_value = app
             banner = ToolWarningBanner("git", "Git")
-            banner.check_status()
+            import asyncio
+            asyncio.run(banner._update_status())
             self.assertTrue(banner.display)
             
             # Switch back to installed
             registry.update_result("git", installed_result)
-            banner.check_status()
+            asyncio.run(banner._update_status())
             self.assertFalse(banner.display)
 
     def test_lldb_is_a_standalone_tool(self) -> None:
-        from etui.tabs.tools import TOOL_BY_ID
+        from etui_tools.tab import TOOL_BY_ID
 
         lldb = TOOL_BY_ID["lldb"]
         self.assertEqual(lldb.display_name, "LLDB Debugger")

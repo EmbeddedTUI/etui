@@ -167,6 +167,7 @@ class SettingsTab(BusMixin, Horizontal):
             ("etui.tabs.probe", "ProbeTab"),
             ("etui.tabs.lldb", "LldbTab"),
             ("etui.tabs.tools", "ToolsTab"),
+            ("etui_tools.tab", "ToolsTab"),
         ]
         for mod_name, class_name in builtin_modules:
             try:

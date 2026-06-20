@@ -16,7 +16,7 @@ from etui.tabs.lldb import (
     ProbeRestartRequested,
 )
 from etui.tabs.probe import ProbeTab, TARGETS
-from etui.tabs.tools import ToolWarningBanner
+from etui.plugin import ToolWarningBanner
 
 
 class LldbTestApp(App):

@@ -5,12 +5,18 @@
 
 from __future__ import annotations
 
+from typing import Any
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Label, Button
 
+if __package__:
+    from .bus import BusMixin
+else:
+    from bus import BusMixin
 
-class ToolWarningBanner(Horizontal):
+
+class ToolWarningBanner(BusMixin, Horizontal):
     DEFAULT_CSS = """
     ToolWarningBanner {
         display: none;
@@ -44,17 +50,42 @@ class ToolWarningBanner(Horizontal):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-fix-tool":
             from textual.widgets import TabbedContent
-            self.app.query_one(TabbedContent).active = "tools"
+            self.app.query_one(TabbedContent).active = "plugin-tools"
             try:
-                tools_tab = self.app.query_one("#tools")
-                if hasattr(tools_tab, "select_tool"):
-                    tools_tab.select_tool(self.tool_id)
+                for widget in self.app.query("*"):
+                    if widget.__class__.__name__ == "ToolsTab":
+                        if hasattr(widget, "select_tool"):
+                            widget.select_tool(self.tool_id)
             except Exception:
                 pass
 
+    def on_mount(self) -> None:
+        self._off_changed = self.bus.subscribe("tools.changed", self._on_tools_changed)
+        self.run_worker(self._update_status())
+        nxt = getattr(super(), "on_mount", None)
+        if nxt is not None:
+            nxt()
+
+    def on_unmount(self) -> None:
+        if hasattr(self, "_off_changed"):
+            self._off_changed()
+        nxt = getattr(super(), "on_unmount", None)
+        if nxt is not None:
+            nxt()
+
+    async def _update_status(self) -> None:
+        try:
+            status = await self.bus.call("tools.status")
+            present = status.get("tools", {}).get(self.tool_id, {}).get("present", False)
+            self.display = not present
+        except Exception:
+            if hasattr(self.app, "tool_registry"):
+                self.display = self.app.tool_registry.is_missing_or_incomplete(self.tool_id)
+
+    def _on_tools_changed(self, event: Any) -> None:
+        status = event.payload or {}
+        present = status.get("tools", {}).get(self.tool_id, {}).get("present", False)
+        self.display = not present
+
     def check_status(self) -> None:
-        if hasattr(self.app, "tool_registry"):
-            if self.app.tool_registry.is_missing_or_incomplete(self.tool_id):
-                self.display = True
-            else:
-                self.display = False
+        self.run_worker(self._update_status())

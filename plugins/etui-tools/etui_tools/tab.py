@@ -19,10 +19,7 @@ from textual.screen import ModalScreen
 from textual.worker import Worker, WorkerCancelled
 from textual.widgets import Label, Button, Input, DataTable, RichLog
 
-if __package__:
-    from ..plugin import SettingsField, SettingsSchema, ToolWarningBanner
-else:
-    from plugin import SettingsField, SettingsSchema, ToolWarningBanner
+from etui.plugin import SettingsField, SettingsSchema, ToolWarningBanner, BusMixin, CancelOnLeaveMixin
 
 # ==============================================================================
 # Manifest & Data Model
@@ -430,7 +427,7 @@ class InstallConfirmation(ModalScreen[bool]):
 # Main Tools Tab Component
 # ==============================================================================
 
-class ToolsTab(Vertical):
+class ToolsTab(CancelOnLeaveMixin, BusMixin, Vertical):
     """ TUI interface for managing external development tools """
 
     settings_schema = SettingsSchema(
@@ -517,17 +514,58 @@ class ToolsTab(Vertical):
                     yield Button("Rescan Tool", id="btn-tools-rescan", disabled=True)
                 yield RichLog(id="tools-log", highlight=True, markup=True)
 
+    def get_status_payload(self) -> dict:
+        tools_info = {}
+        for tool_id, res in self.results.items():
+            present = res.state == ToolState.INSTALLED
+            tools_info[tool_id] = {
+                "present": present,
+                "version": res.version,
+                "path": str(res.active_path) if res.active_path else None,
+            }
+        for tool_id, defn in TOOL_BY_ID.items():
+            if tool_id not in tools_info:
+                present = True
+                for probe in defn.probes:
+                    if probe.required:
+                        if shutil.which(probe.name) is None:
+                            present = False
+                            break
+                tools_info[tool_id] = {
+                    "present": present,
+                    "version": None,
+                    "path": None,
+                }
+        return {"tools": tools_info}
+
+    async def _svc_tools_status(self) -> dict:
+        return self.get_status_payload()
+
     def on_mount(self) -> None:
+        super().on_mount()
+        self._status_provider = self.bus.provide("tools.status", self._svc_tools_status)
+
         table = self.query_one("#tools-table", DataTable)
         table.add_columns("Tool", "Status", "Version", "Active Path", "Source")
         
         sub_table = self.query_one("#tbl-tool-executables", DataTable)
         sub_table.add_columns("Executable", "Path", "Version", "Status")
         
+        # Load settings
+        manager = getattr(self.app, "settings_manager", None)
+        if manager is not None:
+            self.custom_paths = [
+                Path(path) for path in manager.get("tools", "custom_paths", [])
+            ]
+            self.service = ToolService(tuple(self.custom_paths))
+
         self._set_controls_enabled(True)
         self.start_scan_all()
 
     async def on_unmount(self) -> None:
+        super().on_unmount()
+        if hasattr(self, "_status_provider"):
+            self._status_provider()
         await self.cancel_active_operation()
 
     def apply_settings(self, settings: dict) -> None:
@@ -575,16 +613,15 @@ class ToolsTab(Vertical):
             for definition in TOOL_CATALOG:
                 res = await self.service.scan_tool(definition)
                 self.results[definition.tool_id] = res
-                if hasattr(self.app, "tool_registry"):
-                    self.app.tool_registry.update_result(definition.tool_id, res)
             
             self._render_table()
             # Restore selection details if possible
             if self.selected_tool_id:
                 self._render_tool_details(self.selected_tool_id)
-            if hasattr(self.app, "tool_registry"):
-                for banner in self.app.query(ToolWarningBanner):
-                    banner.check_status()
+            
+            self.bus.emit("tools.changed", self.get_status_payload(), source="plugin-tools")
+            for banner in self.app.query(ToolWarningBanner):
+                banner.check_status()
             log.write("[green]System scan completed successfully.[/green]")
         except asyncio.CancelledError:
             log.write("[yellow]Scan cancelled.[/yellow]")
@@ -605,10 +642,10 @@ class ToolsTab(Vertical):
         try:
             res = await self.service.scan_tool(definition)
             self.results[tool_id] = res
-            if hasattr(self.app, "tool_registry"):
-                self.app.tool_registry.update_result(tool_id, res)
-                for banner in self.app.query(ToolWarningBanner):
-                    banner.check_status()
+            
+            self.bus.emit("tools.changed", self.get_status_payload(), source="plugin-tools")
+            for banner in self.app.query(ToolWarningBanner):
+                banner.check_status()
             self._render_table()
             self._render_tool_details(tool_id)
             log.write(f"[green]Scan of {definition.display_name} completed.[/green]")
