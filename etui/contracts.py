@@ -25,10 +25,12 @@ from .bus_contract import (
     SVC_WORKSPACE_SET_ROOT,
     TOPIC_DEBUG_GDBSERVER_DOWN,
     TOPIC_DEBUG_GDBSERVER_READY,
+    TOPIC_SETTINGS_CHANGED,
     TOPIC_THEME_CHANGED,
     TOPIC_WORKSPACE_CHANGED,
     GdbserverDown,
     GdbserverReady,
+    SettingsChanged,
     ThemeChanged,
     WorkspaceChanged,
 )
@@ -140,11 +142,26 @@ def on_debug_gdbserver_down(
     return bus.subscribe(TOPIC_DEBUG_GDBSERVER_DOWN, _handle)
 
 
+def on_settings_changed(
+    bus: ContractBus,
+    handler: Callable[[SettingsChanged], None],
+) -> "Disposer":
+    """Subscribe to settings changed events with a typed payload handler."""
+
+    def _handle(event: "Event") -> None:
+        payload = event.payload
+        if isinstance(payload, SettingsChanged):
+            handler(payload)
+
+    return bus.subscribe(TOPIC_SETTINGS_CHANGED, _handle)
+
+
 __all__ = [
     "debug_get_gdbserver_status",
     "debug_restart_probe",
     "on_debug_gdbserver_down",
     "on_debug_gdbserver_ready",
+    "on_settings_changed",
     "on_theme_changed",
     "on_workspace_changed",
     "theme_get",

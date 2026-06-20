@@ -45,10 +45,12 @@ if __package__:
         SVC_THEME_SET,
         SVC_WORKSPACE_GET_ROOT,
         SVC_WORKSPACE_SET_ROOT,
+        TOPIC_SETTINGS_CHANGED,
         TOPIC_TAB_ACTIVATED,
         TOPIC_TAB_DEACTIVATED,
         TOPIC_THEME_CHANGED,
         TOPIC_WORKSPACE_CHANGED,
+        SettingsChanged,
         TabEvent,
         ThemeChanged,
         WorkspaceChanged,
@@ -81,10 +83,12 @@ else:
         SVC_THEME_SET,
         SVC_WORKSPACE_GET_ROOT,
         SVC_WORKSPACE_SET_ROOT,
+        TOPIC_SETTINGS_CHANGED,
         TOPIC_TAB_ACTIVATED,
         TOPIC_TAB_DEACTIVATED,
         TOPIC_THEME_CHANGED,
         TOPIC_WORKSPACE_CHANGED,
+        SettingsChanged,
         TabEvent,
         ThemeChanged,
         WorkspaceChanged,
@@ -135,9 +139,14 @@ class EtuiApp(App):
         """Bus service: get a settings value."""
         return self.settings_manager.get(section, key, default)
 
-    async def _svc_settings_set(self, section: str, key: str, value: Any) -> None:
+    async def _svc_settings_set(self, section: str, key: str, value: Any, source: str = "host") -> None:
         """Bus service: set a settings value."""
         self.settings_manager.set(section, key, value)
+        self.bus.emit(
+            TOPIC_SETTINGS_CHANGED,
+            SettingsChanged(section=section, key=key, source=source),
+            source="app",
+        )
 
     async def _svc_workspace_get_root(self) -> str:
         """Bus service: get the current workspace root."""

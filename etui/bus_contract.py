@@ -19,6 +19,7 @@ TOPIC_WORKSPACE_CHANGED = "workspace.changed"  # payload: WorkspaceChanged
 TOPIC_THEME_CHANGED = "theme.changed"          # payload: ThemeChanged
 TOPIC_DEBUG_GDBSERVER_READY = "debug.gdbserver_ready"  # payload: GdbserverReady
 TOPIC_DEBUG_GDBSERVER_DOWN = "debug.gdbserver_down"    # payload: GdbserverDown
+TOPIC_SETTINGS_CHANGED = "settings.changed"    # payload: SettingsChanged
 
 # ---- Services (imperative verbs) -----------------------------------------
 # console.run(command: str, timeout: float | None = None) -> int
@@ -78,3 +79,10 @@ class GdbserverReady:
 @dataclass(frozen=True)
 class GdbserverDown:
     iface: str | None = None
+
+
+@dataclass(frozen=True)
+class SettingsChanged:
+    section: str
+    key: str
+    source: str

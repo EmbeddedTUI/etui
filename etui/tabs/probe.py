@@ -19,6 +19,12 @@ from textual.widgets import RichLog
 from textual.widgets import Select
 
 
+if __package__:
+    from ..plugin import SettingsField, SettingsSchema, ToolWarningBanner
+else:
+    from plugin import SettingsField, SettingsSchema, ToolWarningBanner
+
+
 # Available debugger backends: label -> command line (argv) launched as a
 # line-oriented interactive console driven over stdin/stdout.
 BACKENDS = {
@@ -305,6 +311,18 @@ class ProbeLog(RichLog):
 class ProbeTab(Vertical):
     """ Probe tab - drives pyocd, openocd or gdb """
 
+    settings_schema = SettingsSchema(
+        section="probe",
+        fields=(
+            SettingsField(key="backend", type="choice", label="Debugger backend:", choices=("pyocd", "openocd", "gdb"), default="pyocd"),
+            SettingsField(key="target", type="str", label="Target family:"),
+            SettingsField(key="adapter_speed_khz", type="int", label="Adapter speed (kHz):", default=4000),
+            SettingsField(key="gdb_port", type="int", label="GDB server port:", default=3333),
+            SettingsField(key="telnet_port", type="int", label="Telnet port:", default=4444),
+            SettingsField(key="tcl_port", type="int", label="TCL port:", default=6666),
+        )
+    )
+
     DEFAULT_CSS = """
         ProbeTab {
             width: 1fr;
@@ -388,10 +406,6 @@ class ProbeTab(Vertical):
         self._missing_pack: str | None = None
 
     def compose(self) -> ComposeResult:
-        if __package__:
-            from ..plugin import ToolWarningBanner
-        else:
-            from plugin import ToolWarningBanner
         yield ToolWarningBanner("openocd", "OpenOCD", id="openocd-tool-warning")
 
         with Horizontal(id="probe-layout"):

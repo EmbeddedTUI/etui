@@ -20,9 +20,9 @@ from textual.worker import Worker, WorkerCancelled
 from textual.widgets import Label, Button, Input, DataTable, RichLog
 
 if __package__:
-    from ..plugin import ToolWarningBanner
+    from ..plugin import SettingsField, SettingsSchema, ToolWarningBanner
 else:
-    from plugin import ToolWarningBanner
+    from plugin import SettingsField, SettingsSchema, ToolWarningBanner
 
 # ==============================================================================
 # Manifest & Data Model
@@ -433,6 +433,18 @@ class InstallConfirmation(ModalScreen[bool]):
 class ToolsTab(Vertical):
     """ TUI interface for managing external development tools """
 
+    settings_schema = SettingsSchema(
+        section="tools",
+        fields=(
+            SettingsField(
+                key="custom_paths",
+                type="str",
+                label="Custom tool paths:",
+                default="",
+            ),
+        ),
+    )
+
     DEFAULT_CSS = """
     ToolsTab {
         height: 1fr;
@@ -517,6 +529,15 @@ class ToolsTab(Vertical):
 
     async def on_unmount(self) -> None:
         await self.cancel_active_operation()
+
+    def apply_settings(self, settings: dict) -> None:
+        """Apply new custom paths settings and rescan if needed."""
+        self.custom_paths = [
+            Path(path) for path in settings.get("custom_paths", [])
+        ]
+        self.service = ToolService(tuple(self.custom_paths))
+        if not self.busy:
+            self.start_scan_all()
 
     def _save_custom_paths(self) -> None:
         try:

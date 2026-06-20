@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import importlib
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -20,17 +22,72 @@ from textual.widgets import (
     Select,
 )
 
+from etui.plugin import SettingsField, SettingsSchema
 from ..settings import DEFAULT_SETTINGS
-from .lldb import THEMES
-from .probe import ProbeTab
-from .tools import ToolService, ToolsTab
 
 if __package__:
     from ..bus import BusMixin
     from ..contracts import theme_set
+    from ..bus_contract import SVC_SETTINGS_SET
 else:
     from bus import BusMixin
     from contracts import theme_set
+    from bus_contract import SVC_SETTINGS_SET
+
+
+# Core schemas defined locally
+WORKSPACE_SCHEMA = SettingsSchema(
+    section="workspace",
+    fields=(
+        SettingsField(
+            key="root",
+            type="path",
+            label="Workspace root folder:",
+            default="",
+        ),
+        SettingsField(
+            key="auto_restore",
+            type="bool",
+            label="Auto-restore workspace session on startup",
+            default=True,
+        ),
+    )
+)
+
+UI_SCHEMA = SettingsSchema(
+    section="ui",
+    fields=(
+        SettingsField(
+            key="word_wrap",
+            type="bool",
+            label="Enable word wrapping in log views",
+            default=False,
+        ),
+    )
+)
+
+PRETTY_TITLES = {
+    "workspace": "Workspace Settings",
+    "probe": "Probe / Debugger Settings",
+    "lldb": "LLDB Dashboard Settings",
+    "tools": "Tool Search Settings",
+    "ui": "UI Settings",
+}
+
+
+def _field_id(section: str, key: str) -> str:
+    # Map section + key to legacy widget IDs to pass tests and keep CSS selectors working
+    legacy = {
+        ("probe", "adapter_speed_khz"): "set-probe-speed",
+        ("probe", "gdb_port"): "set-probe-gdb",
+        ("probe", "telnet_port"): "set-probe-telnet",
+        ("probe", "tcl_port"): "set-probe-tcl",
+        ("tools", "custom_paths"): "set-tools-paths",
+        ("workspace", "auto_restore"): "set-workspace-restore",
+        ("ui", "word_wrap"): "set-ui-word-wrap",
+        ("lldb", "theme"): "set-lldb-theme",
+    }
+    return legacy.get((section, key), f"set-{section}-{key}")
 
 
 class SettingsTab(BusMixin, Horizontal):
@@ -88,89 +145,10 @@ class SettingsTab(BusMixin, Horizontal):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings-sidebar"):
-            with ListView(id="settings-categories", initial_index=0):
-                yield ListItem(Label("Workspace"), id="item-workspace")
-                yield ListItem(Label("Probe / Debugger"), id="item-probe")
-                yield ListItem(Label("LLDB Dashboard"), id="item-lldb")
-                yield ListItem(Label("Tool Paths"), id="item-tools")
-                yield ListItem(Label("UI"), id="item-ui")
+            yield ListView(id="settings-categories")
 
         with Vertical(id="settings-forms-container"):
-            with ContentSwitcher(id="settings-forms", initial="form-workspace"):
-                with ScrollableContainer(
-                    id="form-workspace", classes="settings-form"
-                ):
-                    yield Label("Workspace Settings", classes="setting-label")
-                    with Vertical(classes="setting-group"):
-                        yield Label("Workspace root folder:")
-                        yield Input(
-                            placeholder="Path to folder...",
-                            id="set-workspace-root",
-                            classes="setting-field",
-                        )
-                    yield Checkbox(
-                        "Auto-restore workspace session on startup",
-                        value=True,
-                        id="set-workspace-restore",
-                    )
-
-                with ScrollableContainer(id="form-probe", classes="settings-form"):
-                    yield Label("Probe / Debugger Settings", classes="setting-label")
-                    with Vertical(classes="setting-group"):
-                        yield Label("Debugger backend:")
-                        yield Select(
-                            [(name, name) for name in ("pyocd", "openocd", "gdb")],
-                            value="pyocd",
-                            allow_blank=False,
-                            id="set-probe-backend",
-                        )
-                    with Vertical(classes="setting-group"):
-                        yield Label("Target family:")
-                        yield Input(
-                            placeholder="e.g. MSPM0L",
-                            id="set-probe-target",
-                            classes="setting-field",
-                        )
-                    for label, widget_id, placeholder in (
-                        ("Adapter speed (kHz):", "set-probe-speed", "4000"),
-                        ("GDB server port:", "set-probe-gdb", "3333"),
-                        ("Telnet port:", "set-probe-telnet", "4444"),
-                        ("TCL port:", "set-probe-tcl", "6666"),
-                    ):
-                        with Vertical(classes="setting-group"):
-                            yield Label(label)
-                            yield Input(
-                                placeholder=placeholder,
-                                id=widget_id,
-                                classes="setting-field",
-                            )
-
-                with ScrollableContainer(id="form-lldb", classes="settings-form"):
-                    yield Label("LLDB Dashboard Settings", classes="setting-label")
-                    with Vertical(classes="setting-group"):
-                        yield Label("Dashboard visual theme:")
-                        yield Select(
-                            [(name.title(), name) for name in THEMES],
-                            value="vibrant",
-                            allow_blank=False,
-                            id="set-lldb-theme",
-                        )
-
-                with ScrollableContainer(id="form-tools", classes="settings-form"):
-                    yield Label("Tool Search Settings", classes="setting-label")
-                    with Vertical(classes="setting-group"):
-                        yield Label("Custom search paths (comma or newline separated):")
-                        yield Input(
-                            placeholder="/usr/local/bin, /opt/toolchain/bin",
-                            id="set-tools-paths",
-                        )
-
-                with ScrollableContainer(id="form-ui", classes="settings-form"):
-                    yield Label("UI Settings", classes="setting-label")
-                    yield Checkbox(
-                        "Enable word wrapping in log views",
-                        id="set-ui-word-wrap",
-                    )
+            yield ContentSwitcher(id="settings-forms")
 
             with Horizontal(id="settings-buttons"):
                 yield Button(
@@ -180,20 +158,126 @@ class SettingsTab(BusMixin, Horizontal):
                     "Save Changes", id="btn-settings-save", variant="primary"
                 )
 
-    def on_mount(self) -> None:
+    def _discover_schemas(self) -> list[SettingsSchema]:
+        schemas = [WORKSPACE_SCHEMA]
+        seen_sections = {"workspace"}
+
+        # Discover built-in tab schemas from known modules
+        builtin_modules = [
+            ("etui.tabs.probe", "ProbeTab"),
+            ("etui.tabs.lldb", "LldbTab"),
+            ("etui.tabs.tools", "ToolsTab"),
+        ]
+        for mod_name, class_name in builtin_modules:
+            try:
+                mod = importlib.import_module(mod_name)
+                cls = getattr(mod, class_name)
+                schema = getattr(cls, "settings_schema", None)
+                if schema and schema.section not in seen_sections:
+                    schemas.append(schema)
+                    seen_sections.add(schema.section)
+            except Exception:
+                pass
+
+        # Check mounted widgets in the app
+        for widget in self.app.query("*"):
+            schema = getattr(widget, "settings_schema", None)
+            if schema and schema.section not in seen_sections:
+                schemas.append(schema)
+                seen_sections.add(schema.section)
+
+        # Check plugin specs
+        plugins = getattr(self.app, "plugins", None)
+        if plugins and hasattr(plugins, "loaded"):
+            for lp in plugins.loaded:
+                if lp.spec.settings_schema and lp.spec.settings_schema.section not in seen_sections:
+                    schemas.append(lp.spec.settings_schema)
+                    seen_sections.add(lp.spec.settings_schema.section)
+
+        if UI_SCHEMA.section not in seen_sections:
+            schemas.append(UI_SCHEMA)
+
+        return schemas
+
+    async def on_mount(self) -> None:
+        self.schemas = self._discover_schemas()
+
+        categories = self.query_one("#settings-categories", ListView)
+        forms = self.query_one("#settings-forms", ContentSwitcher)
+
+        first_form_id = None
+        for schema in self.schemas:
+            form_id = f"form-{schema.section}"
+            if not first_form_id:
+                first_form_id = form_id
+
+            # Category item
+            title = PRETTY_TITLES.get(schema.section, f"{schema.section.title()} Settings")
+            cat_label = title.replace(" Settings", "")
+            await categories.mount(ListItem(Label(cat_label), id=f"item-{schema.section}"))
+
+            # Form container
+            form = ScrollableContainer(id=form_id, classes="settings-form")
+            await forms.mount(form)
+
+            # Add fields to the form
+            await form.mount(Label(title, classes="setting-label"))
+            for field in schema.fields:
+                widget_id = _field_id(schema.section, field.key)
+
+                if field.type == "bool":
+                    await form.mount(Checkbox(field.label, value=bool(field.default), id=widget_id))
+                else:
+                    group = Vertical(classes="setting-group")
+                    await form.mount(group)
+                    await group.mount(Label(field.label))
+
+                    if field.type == "choice":
+                        choices = field.choices or ()
+                        if field.choices_provider:
+                            try:
+                                choices = await self.bus.call(field.choices_provider)
+                            except Exception:
+                                pass
+                        await group.mount(Select(
+                            [(str(c).title(), str(c)) for c in choices],
+                            value=str(field.default) if choices else None,
+                            allow_blank=False,
+                            id=widget_id,
+                        ))
+                    elif field.type == "secret":
+                        await group.mount(Input(
+                            placeholder=f"e.g. {field.default or ''}",
+                            password=True,
+                            id=widget_id,
+                        ))
+                    else:  # str, path, int
+                        placeholder = ""
+                        if schema.section == "tools" and field.key == "custom_paths":
+                            placeholder = "/usr/local/bin, /opt/toolchain/bin"
+                        elif schema.section == "probe" and field.key == "adapter_speed_khz":
+                            placeholder = "4000"
+                        elif schema.section == "probe" and field.key == "gdb_port":
+                            placeholder = "3333"
+                        elif schema.section == "probe" and field.key == "telnet_port":
+                            placeholder = "4444"
+                        elif schema.section == "probe" and field.key == "tcl_port":
+                            placeholder = "6666"
+
+                        await group.mount(Input(
+                            placeholder=placeholder,
+                            id=widget_id,
+                        ))
+
+        if first_form_id:
+            forms.current = first_form_id
+
         self.load_settings_into_ui()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        form_by_item = {
-            "item-workspace": "form-workspace",
-            "item-probe": "form-probe",
-            "item-lldb": "form-lldb",
-            "item-tools": "form-tools",
-            "item-ui": "form-ui",
-        }
-        form_id = form_by_item.get(event.item.id or "")
-        if form_id:
-            self.query_one("#settings-forms", ContentSwitcher).current = form_id
+        if event.item and event.item.id:
+            section = event.item.id.replace("item-", "")
+            self.query_one("#settings-forms", ContentSwitcher).current = f"form-{section}"
 
     def load_settings_into_ui(self) -> None:
         manager = getattr(self.app, "settings_manager", None)
@@ -201,32 +285,29 @@ class SettingsTab(BusMixin, Horizontal):
             self._populate(manager.settings)
 
     def _populate(self, settings: dict) -> None:
-        workspace = settings["workspace"]
-        probe = settings["probe"]
-        lldb = settings["lldb"]
-        tools = settings["tools"]
-        ui = settings["ui"]
+        for schema in self.schemas:
+            section_settings = settings.get(schema.section, {})
+            for field in schema.fields:
+                widget_id = _field_id(schema.section, field.key)
+                try:
+                    widget = self.query_one(f"#{widget_id}")
+                except Exception:
+                    continue
 
-        self.query_one("#set-workspace-root", Input).value = str(workspace["root"])
-        self.query_one("#set-workspace-restore", Checkbox).value = bool(
-            workspace["auto_restore"]
-        )
-        self.query_one("#set-probe-backend", Select).value = str(probe["backend"])
-        self.query_one("#set-probe-target", Input).value = str(probe["target"])
-        self.query_one("#set-probe-speed", Input).value = str(
-            probe["adapter_speed_khz"]
-        )
-        self.query_one("#set-probe-gdb", Input).value = str(probe["gdb_port"])
-        self.query_one("#set-probe-telnet", Input).value = str(probe["telnet_port"])
-        self.query_one("#set-probe-tcl", Input).value = str(probe["tcl_port"])
-        theme = str(lldb["theme"])
-        self.query_one("#set-lldb-theme", Select).value = (
-            theme if theme in THEMES else "vibrant"
-        )
-        self.query_one("#set-tools-paths", Input).value = ", ".join(
-            str(path) for path in tools["custom_paths"]
-        )
-        self.query_one("#set-ui-word-wrap", Checkbox).value = bool(ui["word_wrap"])
+                val = section_settings.get(field.key, field.default)
+                if val is None:
+                    val = field.default
+
+                if field.type == "bool":
+                    widget.value = bool(val)
+                elif field.type == "choice":
+                    choices = field.choices or ()
+                    widget.value = str(val) if val in choices else (str(field.default) if field.default in choices else None)
+                else:  # str, path, secret, int
+                    if isinstance(val, list):
+                        widget.value = ", ".join(str(p) for p in val)
+                    else:
+                        widget.value = str(val) if val is not None else ""
 
     def _parse_positive_int(
         self, selector: str, label: str, maximum: int
@@ -269,97 +350,103 @@ class SettingsTab(BusMixin, Horizontal):
             self.notify("Settings manager is unavailable.", severity="error")
             return
 
-        root = self.query_one("#set-workspace-root", Input).value.strip()
-        if root:
-            workspace_path = Path(root).expanduser().resolve()
-            if not workspace_path.is_dir():
-                self.notify(
-                    f"Invalid workspace root folder: {root}", severity="error"
-                )
-                return
-            root = str(workspace_path)
+        to_save = {}
+        root = ""
 
-        speed = self._parse_positive_int(
-            "#set-probe-speed", "Adapter speed", 10_000_000
-        )
-        gdb_port = self._parse_positive_int("#set-probe-gdb", "GDB port", 65_535)
-        telnet_port = self._parse_positive_int(
-            "#set-probe-telnet", "Telnet port", 65_535
-        )
-        tcl_port = self._parse_positive_int("#set-probe-tcl", "TCL port", 65_535)
-        paths = self._parse_tool_paths()
-        if None in (speed, gdb_port, telnet_port, tcl_port) or paths is None:
-            return
+        for schema in self.schemas:
+            for field in schema.fields:
+                widget_id = _field_id(schema.section, field.key)
+                try:
+                    widget = self.query_one(f"#{widget_id}")
+                except Exception:
+                    continue
 
-        backend = str(self.query_one("#set-probe-backend", Select).value)
-        theme = str(self.query_one("#set-lldb-theme", Select).value)
-        if backend not in {"pyocd", "openocd", "gdb"} or theme not in THEMES:
-            self.notify("A selected setting is invalid.", severity="error")
-            return
+                if schema.section == "tools" and field.key == "custom_paths":
+                    paths = self._parse_tool_paths()
+                    if paths is None:
+                        return
+                    val = paths
+                elif field.type == "bool":
+                    val = widget.value
+                elif field.type == "choice":
+                    val = widget.value
+                elif field.type == "int":
+                    raw = widget.value.strip()
+                    try:
+                        val = int(raw)
+                    except ValueError:
+                        self.notify(f"{field.label} must be an integer.", severity="error")
+                        return
 
-        updated = deepcopy(manager.settings)
-        updated["workspace"].update(
-            {
-                "root": root,
-                "auto_restore": self.query_one(
-                    "#set-workspace-restore", Checkbox
-                ).value,
-            }
-        )
-        updated["probe"].update(
-            {
-                "backend": backend,
-                "target": self.query_one("#set-probe-target", Input).value.strip(),
-                "adapter_speed_khz": speed,
-                "gdb_port": gdb_port,
-                "telnet_port": telnet_port,
-                "tcl_port": tcl_port,
-            }
-        )
-        updated["lldb"].update(
-            {
-                "theme": theme,
-                "layout": manager.get("lldb", "layout", updated["lldb"]["layout"]),
-                "collapsed": manager.get(
-                    "lldb", "collapsed", updated["lldb"]["collapsed"]
-                ),
-            }
-        )
-        updated["tools"]["custom_paths"] = paths
-        updated["ui"]["word_wrap"] = self.query_one(
-            "#set-ui-word-wrap", Checkbox
-        ).value
+                    maximum = 65535
+                    if field.key == "adapter_speed_khz":
+                        maximum = 10_000_000
 
-        try:
-            manager.replace(updated)
-        except OSError as error:
-            self.notify(f"Could not save settings: {error}", severity="error")
-            return
+                    min_val = field.min if field.min is not None else 1
+                    max_val = field.max if field.max is not None else maximum
+
+                    if not min_val <= val <= max_val:
+                        self.notify(
+                            f"{field.label} must be between {min_val} and {max_val}.",
+                            severity="error"
+                        )
+                        return
+                else:  # str, secret, path
+                    val = widget.value.strip()
+                    if field.key == "root" and schema.section == "workspace":
+                        if val:
+                            workspace_path = Path(val).expanduser().resolve()
+                            if not workspace_path.is_dir():
+                                self.notify(
+                                    f"Invalid workspace root folder: {val}", severity="error"
+                                )
+                                return
+                            val = str(workspace_path)
+                            root = val
+                    elif field.type == "path" and val:
+                        path = Path(val).expanduser().resolve()
+                        if not path.is_dir():
+                            self.notify(f"{field.label} must be an existing folder.", severity="error")
+                            return
+                        val = str(path.resolve())
+
+                to_save[(schema.section, field.key)] = val
+
+        # Save values using bus service (SVC_SETTINGS_SET) which emits settings.changed
+        has_set_svc = self.bus.has(SVC_SETTINGS_SET)
+        for (section, key), val in to_save.items():
+            if has_set_svc:
+                await self.bus.call(SVC_SETTINGS_SET, section=section, key=key, value=val, source="host")
+            else:
+                manager.set(section, key, val)
 
         if root:
             await self.app.set_workspace_root(root, persist=False)
-        await self._apply_runtime_settings(updated)
+
+        settings_dict = {}
+        for (section, key), val in to_save.items():
+            if section not in settings_dict:
+                settings_dict[section] = {}
+            settings_dict[section][key] = val
+
+        await self._apply_runtime_settings(settings_dict)
         self.notify("Settings saved.", severity="information")
 
     async def _apply_runtime_settings(self, settings: dict) -> None:
-        probe = self.app.query_one(ProbeTab)
-        probe.apply_settings(settings["probe"])
+        for widget in self.app.query("*"):
+            class_name = widget.__class__.__name__
+            if class_name == "ProbeTab":
+                if hasattr(widget, "apply_settings"):
+                    widget.apply_settings(settings.get("probe", {}))
+            elif class_name == "ToolsTab":
+                if hasattr(widget, "apply_settings"):
+                    widget.apply_settings(settings.get("tools", {}))
 
-        try:
-            tools_tab = self.app.query_one(ToolsTab)
-            tools_tab.custom_paths = [
-                Path(path) for path in settings["tools"]["custom_paths"]
-            ]
-            tools_tab.service = ToolService(tuple(tools_tab.custom_paths))
-            if not tools_tab.busy:
-                tools_tab.start_scan_all()
-        except Exception:
-            pass
+        theme = settings.get("lldb", {}).get("theme")
+        if theme:
+            await theme_set(self.bus, theme)
 
-        theme = settings["lldb"]["theme"]
-        await theme_set(self.bus, theme)
-
-        wrap = bool(settings["ui"]["word_wrap"])
+        wrap = bool(settings.get("ui", {}).get("word_wrap", False))
         for log in self.app.query(RichLog):
             log.wrap = wrap
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from textual.widget import Widget
@@ -30,6 +30,8 @@ __all__ = [
     "EtuiTabPlugin",
     "CancelOnLeaveMixin",
     "ToolWarningBanner",
+    "SettingsField",
+    "SettingsSchema",
     # Re-exported bus primitives so plugins have one import root.
     "BusMixin",
     "MessageBus",
@@ -38,6 +40,30 @@ __all__ = [
     "RpcTimeout",
     "bus_contract",
 ]
+
+
+@dataclass(frozen=True)
+class SettingsField:
+    key: str
+    type: Literal["str", "int", "bool", "choice", "path", "secret"]
+    label: str
+    default: Any = None
+    required: bool = False
+    # validation
+    min: int | None = None
+    max: int | None = None
+    pattern: str | None = None
+    # choice fields: static or dynamic (e.g. LLDB THEMES)
+    choices: tuple[str, ...] | None = None
+    choices_provider: str | None = None   # a service name returning list[str]
+    sensitive: bool = False               # secret: masked in UI, never logged
+    apply: Literal["live", "restart"] = "live"
+
+
+@dataclass(frozen=True)
+class SettingsSchema:
+    section: str                          # maps to the settings section
+    fields: tuple[SettingsField, ...]
 
 
 @dataclass(frozen=True)
@@ -50,6 +76,7 @@ class TabSpec:
     after: str | None = None  # optional pane id to place this after
     help_doc: Path | None = None  # absolute path to the plugin's markdown guide
     provides: tuple[str, ...] = ()
+    settings_schema: SettingsSchema | None = None
 
 
 class EtuiTabPlugin:

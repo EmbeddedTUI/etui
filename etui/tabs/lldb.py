@@ -20,8 +20,10 @@ from textual.widgets import Static
 
 if __package__:
     from ..contracts import on_theme_changed, theme_get, ThemeChanged
+    from ..plugin import SettingsField, SettingsSchema
 else:
     from contracts import on_theme_changed, theme_get, ThemeChanged
+    from plugin import SettingsField, SettingsSchema
 
 
 # Markers used to separate dashboard output (emitted by the lldb stop-hook)
@@ -262,6 +264,19 @@ class LldbTab(Vertical):
     sections that redraw on every stop via an lldb stop-hook. Section
     layout and collapsed state are persisted.
     """
+
+    settings_schema = SettingsSchema(
+        section="lldb",
+        fields=(
+            SettingsField(
+                key="theme",
+                type="choice",
+                label="Dashboard theme:",
+                choices=tuple(THEMES.keys()),
+                default="vibrant",
+            ),
+        ),
+    )
 
     DEFAULT_CSS = """
         LldbTab { height: 1fr; }

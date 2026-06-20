@@ -77,6 +77,8 @@ class ScopedBus:
             # Namespace settings section key to <dotted_id>.<section>
             bus_id = self._id.replace("-", ".")
             kwargs["section"] = f"{bus_id}.{kwargs['section']}"
+        if service == "settings.set":
+            kwargs["source"] = self._id
         return await self._bus.call(service, timeout=timeout, **kwargs)
 
     def dispose_all(self) -> None:
