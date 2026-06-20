@@ -12,7 +12,16 @@ from textual.widget import Widget
 from etui.plugin import API_VERSION, EtuiTabPlugin, TabSpec, CancelOnLeaveMixin, BusMixin
 from etui.plugins import LoadedPlugin, PluginManager, ScopedBus
 from etui.bus import MessageBus
-from etui.bus_contract import TOPIC_TAB_ACTIVATED, TOPIC_TAB_DEACTIVATED, TabEvent
+from etui.bus_contract import (
+    SVC_CONSOLE_RUN,
+    SVC_HELP_ADD_ENTRY,
+    SVC_NAV_ACTIVATE,
+    SVC_SETTINGS_GET,
+    SVC_SETTINGS_SET,
+    TOPIC_TAB_ACTIVATED,
+    TOPIC_TAB_DEACTIVATED,
+    TabEvent,
+)
 
 
 class GoodPlugin(EtuiTabPlugin):
@@ -285,7 +294,56 @@ class MockAppPlugin(EtuiTabPlugin):
         return MockPluginWidget()
 
 
+class HostServiceCheckingWidget(BusMixin, Widget):
+    missing_services: list[str] = []
+    mounted = False
+
+    def on_mount(self) -> None:
+        self.__class__.mounted = True
+        self.__class__.missing_services = [
+            service
+            for service in (
+                SVC_NAV_ACTIVATE,
+                SVC_SETTINGS_GET,
+                SVC_SETTINGS_SET,
+                SVC_HELP_ADD_ENTRY,
+                SVC_CONSOLE_RUN,
+            )
+            if not self.bus.has(service)
+        ]
+
+
+class HostServiceCheckingPlugin(EtuiTabPlugin):
+    def spec(self) -> TabSpec:
+        return TabSpec(id="plugin-host-check", title="Host Check", order=1500)
+
+    def create_widget(self) -> Widget:
+        return HostServiceCheckingWidget()
+
+
 class PluginMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    @patch("etui.plugins._entry_points")
+    async def test_host_services_available_before_plugin_on_mount(self, mock_eps: MagicMock) -> None:
+        from etui.main import EtuiApp
+        from etui.settings import SettingsManager
+        import tempfile
+
+        HostServiceCheckingWidget.missing_services = []
+        HostServiceCheckingWidget.mounted = False
+        mock_eps.return_value = [
+            MockEntryPoint("host_check", HostServiceCheckingPlugin),
+        ]
+
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = Path(d) / "settings.yaml"
+            app = EtuiApp()
+            app.settings_manager = SettingsManager(path=settings_path)
+            app.workspace_root = app.load_workspace_root()
+
+            async with app.run_test():
+                self.assertTrue(HostServiceCheckingWidget.mounted)
+                self.assertEqual(HostServiceCheckingWidget.missing_services, [])
+
     @patch("etui.plugins._entry_points")
     async def test_plugin_mount_integration(self, mock_eps: MagicMock) -> None:
         from etui.main import EtuiApp
@@ -461,5 +519,4 @@ class PluginMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     help_tab.post_message.assert_not_called()
                 finally:
                     help_tab.post_message = original_post_message
-
 

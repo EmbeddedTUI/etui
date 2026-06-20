@@ -35,7 +35,16 @@ if __package__:
     from .tabs.workflow import WorkflowTab
     from .settings import SettingsManager
     from .bus import MessageBus
-    from .bus_contract import SVC_NAV_ACTIVATE, TOPIC_TAB_ACTIVATED, TOPIC_TAB_DEACTIVATED, TabEvent, SVC_SETTINGS_GET, SVC_SETTINGS_SET, SVC_HELP_ADD_ENTRY
+    from .bus_contract import (
+        SVC_CONSOLE_RUN,
+        SVC_HELP_ADD_ENTRY,
+        SVC_NAV_ACTIVATE,
+        SVC_SETTINGS_GET,
+        SVC_SETTINGS_SET,
+        TOPIC_TAB_ACTIVATED,
+        TOPIC_TAB_DEACTIVATED,
+        TabEvent,
+    )
 else:
     from tabs.help import HelpTab, OpenDocFile
     from tabs.about import AboutTab
@@ -54,7 +63,16 @@ else:
     from tabs.workflow import WorkflowTab
     from settings import SettingsManager
     from bus import MessageBus
-    from bus_contract import SVC_NAV_ACTIVATE, TOPIC_TAB_ACTIVATED, TOPIC_TAB_DEACTIVATED, TabEvent, SVC_SETTINGS_GET, SVC_SETTINGS_SET, SVC_HELP_ADD_ENTRY
+    from bus_contract import (
+        SVC_CONSOLE_RUN,
+        SVC_HELP_ADD_ENTRY,
+        SVC_NAV_ACTIVATE,
+        SVC_SETTINGS_GET,
+        SVC_SETTINGS_SET,
+        TOPIC_TAB_ACTIVATED,
+        TOPIC_TAB_DEACTIVATED,
+        TabEvent,
+    )
 
 class CommandMessage(Message):
     def __init__(self ,command: str) -> None:
@@ -221,6 +239,8 @@ class EtuiApp(App):
             pass
 
     async def on_mount(self) -> None:
+        await self._mount_plugin_tabs()
+
         probe_tab = self.query_one(ProbeTab)
         probe_tab.apply_settings(self.settings_manager.settings["probe"])
         wrap = bool(self.settings_manager.get("ui", "word_wrap", False))
@@ -241,6 +261,35 @@ class EtuiApp(App):
                 timeout=12,
                 action="restore_workspace",
             )
+
+    async def _mount_plugin_tabs(self) -> None:
+        missing_services = [
+            service
+            for service in (
+                SVC_NAV_ACTIVATE,
+                SVC_SETTINGS_GET,
+                SVC_SETTINGS_SET,
+                SVC_HELP_ADD_ENTRY,
+                SVC_CONSOLE_RUN,
+            )
+            if not self.bus.has(service)
+        ]
+        if missing_services:
+            self.plugins.errors.append(
+                (
+                    "host-services",
+                    f"missing host service(s) before plugin mount: {', '.join(missing_services)}",
+                )
+            )
+            logger.error(
+                "missing host service(s) before plugin mount: %s",
+                ", ".join(missing_services),
+            )
+            self.notify(
+                "Plugin host services are not ready; plugin tabs were not mounted",
+                severity="error",
+            )
+            return
 
         # Mount plugin tabs
         tabs = self.query_one(TabbedContent)
