@@ -5,7 +5,7 @@
 groups = ["default", "default-tabs", "dev", "plugins"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:3111d343ff19536eddb7abe548fe2fbe5cc3e23ea417d6a8e724207f146ed9d7"
+content_hash = "sha256:2c30879301fecf724bc3c8d62b4666ccecd34f9799b3f7af646f3c336894ae94"
 
 [[metadata.targets]]
 requires_python = ">=3.13,<3.15"
@@ -494,6 +494,19 @@ groups = ["plugins"]
 dependencies = [
     "amqtt @ file:///home/pawel/src/32bitmicroLLC/EmbeddedTUI/etui/../etui_mqtt/../amqtt",
     "etui @ file:///${PROJECT_ROOT}/.",
+    "textual>=8.1.1",
+]
+
+[[package]]
+name = "etui-serial"
+version = "0.1.0"
+requires_python = ">=3.13,<3.15"
+path = "./plugins/etui-serial"
+summary = "Serial Console Tab Plugin for etui"
+groups = ["default-tabs"]
+dependencies = [
+    "etui>=0.3.0",
+    "pyserial>=3.5",
     "textual>=8.1.1",
 ]
 

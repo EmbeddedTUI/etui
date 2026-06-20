@@ -1,0 +1,20 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "etui-serial"
+version = "0.1.0"
+description = "Serial Console Tab Plugin for etui"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "etui>=0.3.0",
+    "textual>=8.1.1",
+    "pyserial>=3.5",
+]
+
+[project.entry-points."etui.tabs"]
+serial = "etui_serial:SerialTabPlugin"
+
+[tool.pdm.build]
+includes = ["etui_serial/"]

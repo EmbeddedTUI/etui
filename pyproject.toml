@@ -46,6 +46,7 @@ default-tabs = [
     "etui-venv @ file:///${PROJECT_ROOT}/plugins/etui-venv",
     "etui-cmake @ file:///${PROJECT_ROOT}/plugins/etui-cmake",
     "etui-workflow @ file:///${PROJECT_ROOT}/plugins/etui-workflow",
+    "etui-serial @ file:///${PROJECT_ROOT}/plugins/etui-serial",
 ]
 plugins = [
     "etui-mqtt @ file:///${PROJECT_ROOT}/../etui_mqtt",

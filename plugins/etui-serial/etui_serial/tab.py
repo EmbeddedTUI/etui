@@ -10,8 +10,27 @@ from textual.widgets import Button, RichLog, Select, Label
 from textual.message import Message
 from textual.worker import WorkerState
 
-class SerialTab(Vertical):
+from etui.plugin import CancelOnLeaveMixin, BusMixin
+
+
+class SerialTab(CancelOnLeaveMixin, BusMixin, Vertical):
     """ Serial console tab"""
+
+    DEFAULT_CSS = """
+    SerialTab {
+        height: 1fr;
+    }
+    #serial-port {
+        width: 40;
+    }
+    #serial-baud {
+        width: 20;
+    }
+    #serial-connect {
+        width: 15;
+        margin-left: 1;
+    }
+    """
 
     def __init__(self):
         super().__init__()
@@ -32,7 +51,20 @@ class SerialTab(Vertical):
         yield RichLog(id="serial-log", highlight=True, markup=True)
 
     def on_mount(self) -> None:
+        super().on_mount()
+        if self.bus is not None:
+            self.bus.provide("serial.send", self._svc_serial_send)
         self.refresh_ports()
+
+    def on_unmount(self) -> None:
+        self.disconnect()
+        super().on_unmount()
+
+    def survives_leave(self) -> bool:
+        return True
+
+    async def _svc_serial_send(self, data: str) -> None:
+        self.send_data(data)
 
     def refresh_ports(self) -> None:
         ports = serial.tools.list_ports.comports()

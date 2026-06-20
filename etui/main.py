@@ -25,7 +25,6 @@ if __package__:
     from .tabs.probe import ProbeTab, LldbStart
     from .tabs.lldb import LldbTab, ProbeRestartRequested
     from .tabs.theme import ThemeTab
-    from .tabs.serial import SerialTab
     from .tabs.git import GitTab, RepositoryChanged
     from .tabs.github import GitHubTab
     from .tabs.settings import SettingsTab
@@ -59,7 +58,6 @@ else:
     from tabs.probe import ProbeTab, LldbStart
     from tabs.lldb import LldbTab, ProbeRestartRequested
     from tabs.theme import ThemeTab
-    from tabs.serial import SerialTab
     from tabs.git import GitTab, RepositoryChanged
     from tabs.github import GitHubTab
     from tabs.settings import SettingsTab
@@ -188,19 +186,6 @@ class EtuiApp(App):
         .control-label {
             margin-top: 1;
             margin-right: 1;
-        }
-        
-        #serial-port {
-            width: 40;
-        }
-        
-        #serial-baud {
-            width: 20;
-        }
-
-        #serial-connect {
-            width: 15;
-            margin-left: 1;
         }
     """
 
@@ -345,8 +330,6 @@ class EtuiApp(App):
                 yield GitTab()
             with TabPane("GitHub", id="github"):
                 yield GitHubTab()
-            with TabPane("Serial", id="serial"):
-                yield SerialTab()
             with TabPane("Probe", id="probe"):
                 yield ProbeTab()
             with TabPane("LLDB", id="lldb"):
@@ -410,7 +393,7 @@ class EtuiApp(App):
         
         # Show main-input only for serial tab, hide for all others
         try:
-            self.query_one("#main-input").display = (pane_id == "serial")
+            self.query_one("#main-input").display = (pane_id == "plugin-serial")
         except Exception:
             pass
 
@@ -435,7 +418,7 @@ class EtuiApp(App):
                 self.query_one("#console-terminal").focus()
             except Exception:
                 pass
-        elif pane_id == "serial":
+        elif pane_id == "plugin-serial":
             try:
                 self.query_one("#main-input").focus()
             except Exception:
@@ -498,11 +481,13 @@ class EtuiApp(App):
 
 
 
-    def on_command_message(self, message: CommandMessage) -> None:
+    async def on_command_message(self, message: CommandMessage) -> None:
         tabs = self.query_one(TabbedContent)
-        if tabs.active == "serial":
-            serial = self.query_one(SerialTab)
-            serial.send_data(message.command)
+        if tabs.active == "plugin-serial":
+            try:
+                await self.bus.call("serial.send", data=message.command)
+            except Exception:
+                pass
         else:
             tabs.active = "console"
             #self.notify(f"Got command message {message.command}")
