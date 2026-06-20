@@ -14,7 +14,6 @@ from etui.bus_contract import SVC_WORKSPACE_GET_ROOT, SVC_WORKSPACE_SET_ROOT
 from etui.main import EtuiApp
 from etui.tabs.files import FilesTab
 from etui.tabs.console import ConsoleTab
-from etui.tabs.git import GitTab
 
 
 def _run_textual_test(coro) -> None:
@@ -63,7 +62,6 @@ class WorkspaceRootTests(unittest.TestCase):
 
     def _suppress_workspace_workers(self) -> ExitStack:
         stack = ExitStack()
-        stack.enter_context(patch.object(GitTab, "validate_and_load_repo"))
         stack.enter_context(patch("etui.main.Path.cwd", return_value=self.workspace_root))
         return stack
 
@@ -85,10 +83,6 @@ class WorkspaceRootTests(unittest.TestCase):
                 # Check console tab cwd
                 console_tab = app.query_one(ConsoleTab)
                 self.assertEqual(str(console_tab.cwd), str(self.workspace_root))
-
-                # Check git tab path
-                git_tab = app.query_one(GitTab)
-                self.assertEqual(git_tab.query_one("#txt-repo-path", Input).value, str(self.workspace_root))
 
     def test_workspace_services_round_trip(self) -> None:
         _run_textual_test(self._test_workspace_services_round_trip())

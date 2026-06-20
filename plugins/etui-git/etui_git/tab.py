@@ -12,25 +12,13 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.message import Message
 from textual.worker import Worker, WorkerCancelled
 from textual.widgets import Button, Input, Label, RichLog, Tree
 from textual.css.query import NoMatches
 
-if __package__:
-    from ..bus_contract import WorkspaceChanged
-    from ..contracts import on_workspace_changed, workspace_get_root
-else:  # pragma: no cover - script-mode import
-    from bus_contract import WorkspaceChanged
-    from contracts import on_workspace_changed, workspace_get_root
-
-
-class RepositoryChanged(Message):
-    """Event posted when repository context changes."""
-
-    def __init__(self, path: str) -> None:
-        super().__init__()
-        self.path = path
+from etui.plugin import CancelOnLeaveMixin, BusMixin, ToolWarningBanner
+from etui.bus_contract import TOPIC_REPO_CHANGED, RepoChanged, WorkspaceChanged
+from etui.contracts import on_workspace_changed, workspace_get_root
 
 
 @dataclass(frozen=True)
@@ -40,7 +28,7 @@ class GitChange:
     staged: bool
 
 
-class GitTab(Vertical):
+class GitTab(CancelOnLeaveMixin, BusMixin, Vertical):
     """Repository Git dashboard tab."""
 
     DIFF_LIMIT = 100 * 1024
@@ -108,10 +96,6 @@ class GitTab(Vertical):
         self._workspace_disposer = None
 
     def compose(self) -> ComposeResult:
-        if __package__:
-            from ..plugin import ToolWarningBanner
-        else:
-            from plugin import ToolWarningBanner
         yield ToolWarningBanner("git", "Git", id="git-tool-warning")
 
         with Horizontal(id="git-repo-select"):
@@ -170,7 +154,8 @@ class GitTab(Vertical):
                         )
 
     async def on_mount(self) -> None:
-        bus = getattr(self.app, "bus", None)
+        super().on_mount()
+        bus = self.bus
         if bus is not None:
             try:
                 root = await workspace_get_root(bus)
@@ -189,6 +174,7 @@ class GitTab(Vertical):
             self._workspace_disposer()
             self._workspace_disposer = None
         await self.cancel_active_operation()
+        super().on_unmount()
 
     async def deactivate_tab(self) -> None:
         await self.cancel_active_operation()
@@ -249,29 +235,14 @@ class GitTab(Vertical):
         self.busy = True
         self._cancel_requested = False
         self._set_controls_enabled(False)
-        worker = self.run_worker(
-            self._run_operation(operation),
+        self._operation_worker = self.run_worker(
+            operation,
             name=name,
             group="git-ops",
-            exclusive=False,
+            exclusive=True,
             exit_on_error=False,
         )
-        self._operation_worker = worker
-        return worker
-
-    async def _run_operation(self, operation: Awaitable[None]) -> None:
-        try:
-            await operation
-        except asyncio.CancelledError:
-            self._write_log("Git operation cancelled.", style="yellow")
-            raise
-        except (OSError, UnicodeError, ValueError) as error:
-            self._write_log(f"Git operation failed: {error}", style="red")
-        finally:
-            self._active_subprocess = None
-            self._operation_worker = None
-            self.busy = False
-            self._set_controls_enabled(self.repo_path is not None)
+        return self._operation_worker
 
     async def cancel_active_operation(self) -> None:
         self._cancel_requested = True
@@ -289,7 +260,6 @@ class GitTab(Vertical):
         process = self._active_subprocess
         if process is None or process.returncode is not None:
             return
-
         try:
             if os.name == "posix":
                 os.killpg(process.pid, signal.SIGTERM)
@@ -297,9 +267,8 @@ class GitTab(Vertical):
                 process.terminate()
         except ProcessLookupError:
             return
-
         try:
-            await asyncio.wait_for(process.wait(), timeout=3.0)
+            await asyncio.wait_for(process.wait(), timeout=3)
         except TimeoutError:
             try:
                 if os.name == "posix":
@@ -314,10 +283,9 @@ class GitTab(Vertical):
         self,
         args: list[str],
         *,
-        cwd: Path | None = None,
         env: dict[str, str] | None = None,
         timeout: float = 15.0,
-        stdin: bytes | None = None,
+        cwd: Path | None = None,
     ) -> tuple[int, bytes, bytes]:
         git_path = "git"
         if hasattr(self.app, "tool_registry"):
@@ -331,16 +299,15 @@ class GitTab(Vertical):
             git_path,
             *args,
             cwd=str(cwd or self.repo_path) if (cwd or self.repo_path) else None,
-            env=env,
-            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
             start_new_session=(os.name == "posix"),
         )
         self._active_subprocess = process
         try:
             stdout, stderr = await asyncio.wait_for(
-                process.communicate(stdin),
+                process.communicate(),
                 timeout=timeout,
             )
             return process.returncode or 0, stdout, stderr
@@ -436,7 +403,7 @@ class GitTab(Vertical):
             return
 
         self.repo_path = Path(os.fsdecode(stdout).strip()).resolve()
-        self.post_message(RepositoryChanged(str(self.repo_path)))
+        self.bus.emit(TOPIC_REPO_CHANGED, RepoChanged(path=str(self.repo_path)))
         await self._load_repo_status()
 
     async def _load_repo_status(self) -> None:

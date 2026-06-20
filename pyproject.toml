@@ -48,6 +48,7 @@ default-tabs = [
     "etui-workflow @ file:///${PROJECT_ROOT}/plugins/etui-workflow",
     "etui-serial @ file:///${PROJECT_ROOT}/plugins/etui-serial",
     "etui-github @ file:///${PROJECT_ROOT}/plugins/etui-github",
+    "etui-git @ file:///${PROJECT_ROOT}/plugins/etui-git",
 ]
 plugins = [
     "etui-mqtt @ file:///${PROJECT_ROOT}/../etui_mqtt",

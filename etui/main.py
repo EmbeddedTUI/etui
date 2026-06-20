@@ -25,7 +25,6 @@ if __package__:
     from .tabs.probe import ProbeTab, LldbStart
     from .tabs.lldb import LldbTab, ProbeRestartRequested
     from .tabs.theme import ThemeTab
-    from .tabs.git import GitTab, RepositoryChanged
     from .tabs.settings import SettingsTab
     from .settings import SettingsManager
     from .bus import MessageBus
@@ -39,11 +38,13 @@ if __package__:
         SVC_THEME_SET,
         SVC_WORKSPACE_GET_ROOT,
         SVC_WORKSPACE_SET_ROOT,
+        TOPIC_REPO_CHANGED,
         TOPIC_SETTINGS_CHANGED,
         TOPIC_TAB_ACTIVATED,
         TOPIC_TAB_DEACTIVATED,
         TOPIC_THEME_CHANGED,
         TOPIC_WORKSPACE_CHANGED,
+        RepoChanged,
         SettingsChanged,
         TabEvent,
         ThemeChanged,
@@ -57,7 +58,6 @@ else:
     from tabs.probe import ProbeTab, LldbStart
     from tabs.lldb import LldbTab, ProbeRestartRequested
     from tabs.theme import ThemeTab
-    from tabs.git import GitTab, RepositoryChanged
     from tabs.settings import SettingsTab
     from settings import SettingsManager
     from bus import MessageBus
@@ -71,11 +71,13 @@ else:
         SVC_THEME_SET,
         SVC_WORKSPACE_GET_ROOT,
         SVC_WORKSPACE_SET_ROOT,
+        TOPIC_REPO_CHANGED,
         TOPIC_SETTINGS_CHANGED,
         TOPIC_TAB_ACTIVATED,
         TOPIC_TAB_DEACTIVATED,
         TOPIC_THEME_CHANGED,
         TOPIC_WORKSPACE_CHANGED,
+        RepoChanged,
         SettingsChanged,
         TabEvent,
         ThemeChanged,
@@ -217,6 +219,7 @@ class EtuiApp(App):
             )
 
     async def on_mount(self) -> None:
+        self.bus.subscribe(TOPIC_REPO_CHANGED, self._on_repo_changed)
         await self._mount_plugin_tabs()
 
         wrap = bool(self.settings_manager.get("ui", "word_wrap", False))
@@ -324,8 +327,6 @@ class EtuiApp(App):
                 yield FilesTab()
             with TabPane("Console", id="console"):
                 yield ConsoleTab()
-            with TabPane("Git", id="git"):
-                yield GitTab()
             with TabPane("Probe", id="probe"):
                 yield ProbeTab()
             with TabPane("LLDB", id="lldb"):
@@ -429,7 +430,7 @@ class EtuiApp(App):
                 self.query_one("#lldb-input").focus()
             except Exception:
                 pass
-        elif pane_id == "git":
+        elif pane_id == "plugin-git":
             try:
                 self.query_one("#txt-repo-path").focus()
             except Exception:
@@ -450,18 +451,6 @@ class EtuiApp(App):
             except Exception:
                 pass
 
-        if old_pane_id == "git" and pane_id != "git":
-            try:
-                git_tab = self.query_one(GitTab)
-                if git_tab.busy:
-                    self.run_worker(
-                        git_tab.cancel_active_operation(),
-                        name="cancel-git-operation",
-                        exit_on_error=False,
-                    )
-            except Exception:
-                pass
-
 
 
 
@@ -478,8 +467,10 @@ class EtuiApp(App):
             console = self.query_one(ConsoleTab)
             self.run_worker(console.run_command(message.command))
 
-    async def on_repository_changed(self, message: RepositoryChanged) -> None:
-        await self.set_workspace_root(message.path, update_files=True)
+    def _on_repo_changed(self, event) -> None:
+        payload = event.payload
+        if isinstance(payload, RepoChanged):
+            self.run_worker(self.set_workspace_root(payload.path, update_files=True))
 
     async def action_restore_workspace(self) -> None:
         saved = self.settings_manager.get("workspace", "root")

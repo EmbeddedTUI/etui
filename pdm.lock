@@ -5,7 +5,7 @@
 groups = ["default", "default-tabs", "dev", "plugins"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:6f1ddc5b5f6f479eeb150d6011c2967284509ac5308b348be591f23592ed9118"
+content_hash = "sha256:499c4f26eada9b04ac513e69dc34e65172d1f8a951d5684722b0c6fbd7e99626"
 
 [[metadata.targets]]
 requires_python = ">=3.13,<3.15"
@@ -481,6 +481,18 @@ dependencies = [
     "httpx>=0.27",
     "keyring>=24",
     "msal>=1.28",
+    "textual>=8.1.1",
+]
+
+[[package]]
+name = "etui-git"
+version = "0.1.0"
+requires_python = ">=3.13,<3.15"
+path = "./plugins/etui-git"
+summary = "Git Tab Plugin for etui"
+groups = ["default-tabs"]
+dependencies = [
+    "etui>=0.3.0",
     "textual>=8.1.1",
 ]
 

@@ -11,19 +11,27 @@ from textual.app import App, ComposeResult
 from textual.widgets import RichLog, Tree
 from textual.worker import WorkerCancelled
 
-from etui.tabs.git import GitChange, GitTab, RepositoryChanged
+from etui.bus import MessageBus
+from etui.bus_contract import TOPIC_REPO_CHANGED, RepoChanged
+from etui_git.tab import GitChange, GitTab
 
 
 class GitTestApp(App):
     def __init__(self) -> None:
         super().__init__()
+        self.bus = MessageBus()
         self.repository_events: list[str] = []
+        self.bus.subscribe(TOPIC_REPO_CHANGED, self._on_repo_changed)
+        # Provide dummy workspace get_root to satisfy mount query
+        self.bus.provide("workspace.get_root", lambda: "")
 
     def compose(self) -> ComposeResult:
         yield GitTab()
 
-    def on_repository_changed(self, message: RepositoryChanged) -> None:
-        self.repository_events.append(message.path)
+    def _on_repo_changed(self, event) -> None:
+        payload = event.payload
+        if isinstance(payload, RepoChanged):
+            self.repository_events.append(payload.path)
 
 
 def run_git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
