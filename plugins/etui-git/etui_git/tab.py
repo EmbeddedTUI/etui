@@ -236,13 +236,28 @@ class GitTab(CancelOnLeaveMixin, BusMixin, Vertical):
         self._cancel_requested = False
         self._set_controls_enabled(False)
         self._operation_worker = self.run_worker(
-            operation,
+            self._run_operation(operation),
             name=name,
             group="git-ops",
-            exclusive=True,
+            exclusive=False,
             exit_on_error=False,
         )
         return self._operation_worker
+
+    async def _run_operation(self, operation: Awaitable[None]) -> None:
+        """Run an operation, always clearing ``busy`` and re-enabling controls."""
+        try:
+            await operation
+        except asyncio.CancelledError:
+            self._write_log("Git operation cancelled.", style="yellow")
+            raise
+        except (OSError, UnicodeError, ValueError) as error:
+            self._write_log(f"Git operation failed: {error}", style="red")
+        finally:
+            self._active_subprocess = None
+            self._operation_worker = None
+            self.busy = False
+            self._set_controls_enabled(self.repo_path is not None)
 
     async def cancel_active_operation(self) -> None:
         self._cancel_requested = True
