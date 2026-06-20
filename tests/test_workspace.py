@@ -14,7 +14,6 @@ from etui.bus_contract import SVC_WORKSPACE_GET_ROOT, SVC_WORKSPACE_SET_ROOT
 from etui.main import EtuiApp
 from etui.tabs.files import FilesTab
 from etui.tabs.console import ConsoleTab
-from etui.tabs.venv import VenvTab
 from etui.tabs.git import GitTab
 from etui.tabs.cmake import CMakeTab
 from etui.tabs.github import GitHubTab
@@ -71,7 +70,6 @@ class WorkspaceRootTests(unittest.TestCase):
 
     def _suppress_workspace_workers(self) -> ExitStack:
         stack = ExitStack()
-        stack.enter_context(patch.object(VenvTab, "start_project_selection"))
         stack.enter_context(patch.object(GitTab, "validate_and_load_repo"))
         stack.enter_context(patch("etui.main.Path.cwd", return_value=self.workspace_root))
         stack.enter_context(
@@ -103,10 +101,6 @@ class WorkspaceRootTests(unittest.TestCase):
                 # Check console tab cwd
                 console_tab = app.query_one(ConsoleTab)
                 self.assertEqual(str(console_tab.cwd), str(self.workspace_root))
-
-                # Check venv tab path
-                venv_tab = app.query_one(VenvTab)
-                self.assertEqual(venv_tab.query_one("#venv-project-path", Input).value, str(self.workspace_root))
 
                 # Check git tab path
                 git_tab = app.query_one(GitTab)

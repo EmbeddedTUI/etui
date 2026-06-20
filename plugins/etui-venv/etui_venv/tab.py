@@ -13,15 +13,12 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, DataTable, Input, Label, RichLog
 from textual.worker import Worker
 
-if __package__:
-    from ..bus_contract import WorkspaceChanged
-    from ..contracts import on_workspace_changed, workspace_get_root
-else:  # pragma: no cover - script-mode import
-    from bus_contract import WorkspaceChanged
-    from contracts import on_workspace_changed, workspace_get_root
+from etui.plugin import CancelOnLeaveMixin, BusMixin
+from etui.bus_contract import WorkspaceChanged
+from etui.contracts import on_workspace_changed, workspace_get_root
 
 
-class VenvTab(Vertical):
+class VenvTab(CancelOnLeaveMixin, BusMixin, Vertical):
     """Manage an explicitly selected external PDM project."""
 
     DEFAULT_CSS = """
@@ -137,8 +134,13 @@ class VenvTab(Vertical):
     def is_busy(self) -> bool:
         return self._busy
 
+    @property
+    def busy(self) -> bool:
+        return self._busy
+
     async def on_mount(self) -> None:
-        bus = getattr(self.app, "bus", None)
+        super().on_mount()
+        bus = self.bus
         if bus is not None:
             try:
                 root = await workspace_get_root(bus)
@@ -169,6 +171,7 @@ class VenvTab(Vertical):
         await self.cancel_active_operation()
         if self._operation_worker is not None:
             self._operation_worker.cancel()
+        super().on_unmount()
 
     def _on_workspace_changed(self, event) -> None:
         root = event.root

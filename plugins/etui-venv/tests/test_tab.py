@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 from packaging.requirements import InvalidRequirement
 from textual.app import App, ComposeResult
 
-from etui.tabs.venv import VenvTab
+from etui_venv.tab import VenvTab
 
 
 class VenvTestApp(App):

@@ -26,7 +26,6 @@ if __package__:
     from .tabs.lldb import LldbTab, ProbeRestartRequested
     from .tabs.theme import ThemeTab
     from .tabs.serial import SerialTab
-    from .tabs.venv import VenvTab
     from .tabs.git import GitTab, RepositoryChanged
     from .tabs.github import GitHubTab
     from .tabs.cmake import CMakeTab
@@ -63,7 +62,6 @@ else:
     from tabs.lldb import LldbTab, ProbeRestartRequested
     from tabs.theme import ThemeTab
     from tabs.serial import SerialTab
-    from tabs.venv import VenvTab
     from tabs.git import GitTab, RepositoryChanged
     from tabs.github import GitHubTab
     from tabs.cmake import CMakeTab
@@ -361,8 +359,6 @@ class EtuiApp(App):
                 yield ProbeTab()
             with TabPane("LLDB", id="lldb"):
                 yield LldbTab(settings=self.settings_manager.settings["lldb"])
-            with TabPane("Venv", id="venv"):
-                yield VenvTab()
             with TabPane("Settings", id="settings"):
                 yield SettingsTab()
             with TabPane("Theme", id="theme"):
@@ -487,26 +483,9 @@ class EtuiApp(App):
                 self.query_one("#tools-table").focus()
             except Exception:
                 pass
-        elif pane_id == "venv":
-            try:
-                self.query_one("#venv-project-path").focus()
-            except Exception:
-                pass
         elif pane_id == "settings":
             try:
                 self.query_one("#settings-categories").focus()
-            except Exception:
-                pass
-
-        if old_pane_id == "venv" and pane_id != "venv":
-            try:
-                venv_tab = self.query_one(VenvTab)
-                if venv_tab.is_busy:
-                    self.run_worker(
-                        venv_tab.cancel_active_operation(),
-                        name="cancel-venv-operation",
-                        exit_on_error=False,
-                    )
             except Exception:
                 pass
 

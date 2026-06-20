@@ -43,6 +43,7 @@ dependencies = [
 [project.optional-dependencies]
 default-tabs = [
     "etui-tools @ file:///${PROJECT_ROOT}/plugins/etui-tools",
+    "etui-venv @ file:///${PROJECT_ROOT}/plugins/etui-venv",
 ]
 plugins = [
     "etui-mqtt @ file:///${PROJECT_ROOT}/../etui_mqtt",

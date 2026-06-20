@@ -1,0 +1,20 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "etui-venv"
+version = "0.1.0"
+description = "Venv Project Manager Tab Plugin for etui"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "etui>=0.3.0",
+    "textual>=8.1.1",
+    "packaging>=22.0",
+]
+
+[project.entry-points."etui.tabs"]
+venv = "etui_venv:VenvTabPlugin"
+
+[tool.pdm.build]
+includes = ["etui_venv/"]
