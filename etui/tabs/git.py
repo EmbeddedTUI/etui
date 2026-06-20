@@ -18,9 +18,11 @@ from textual.widgets import Button, Input, Label, RichLog, Tree
 from textual.css.query import NoMatches
 
 if __package__:
-    from ..contracts import on_workspace_changed
+    from ..bus_contract import WorkspaceChanged
+    from ..contracts import on_workspace_changed, workspace_get_root
 else:  # pragma: no cover - script-mode import
-    from contracts import on_workspace_changed
+    from bus_contract import WorkspaceChanged
+    from contracts import on_workspace_changed, workspace_get_root
 
 
 class RepositoryChanged(Message):
@@ -167,9 +169,14 @@ class GitTab(Vertical):
                             disabled=True,
                         )
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         bus = getattr(self.app, "bus", None)
         if bus is not None:
+            try:
+                root = await workspace_get_root(bus)
+                self._on_workspace_changed(WorkspaceChanged(root=root))
+            except Exception:
+                pass
             self._workspace_disposer = on_workspace_changed(
                 bus,
                 self._on_workspace_changed,

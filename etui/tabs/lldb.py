@@ -19,9 +19,9 @@ from textual.widgets import Static
 
 
 if __package__:
-    from ..contracts import on_theme_changed, ThemeChanged
+    from ..contracts import on_theme_changed, theme_get, ThemeChanged
 else:
-    from contracts import on_theme_changed, ThemeChanged
+    from contracts import on_theme_changed, theme_get, ThemeChanged
 
 
 # Markers used to separate dashboard output (emitted by the lldb stop-hook)
@@ -368,6 +368,11 @@ class LldbTab(Vertical):
         )
         bus = getattr(self.app, "bus", None)
         if bus is not None:
+            try:
+                theme = await theme_get(bus)
+                await self.set_theme(theme)
+            except Exception:
+                pass
             self._theme_disposer = on_theme_changed(
                 bus,
                 self._on_theme_changed,

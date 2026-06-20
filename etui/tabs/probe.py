@@ -1041,6 +1041,9 @@ class ProbeTab(Vertical):
     def on_mount(self) -> None:
         self.query_one("#dbg-install-pack", Button).display = False
         self.query_one("#dbg-install-stlink", Button).display = False
+        manager = getattr(self.app, "settings_manager", None)
+        if manager is not None:
+            self.apply_settings(manager.settings.get("probe", {}))
 
     def on_unmount(self) -> None:
         # Avoid orphaned debugger processes holding the probe / ports.

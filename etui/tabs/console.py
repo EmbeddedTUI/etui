@@ -42,7 +42,7 @@ if __package__:
         SVC_CONSOLE_RUN,
         SVC_NAV_ACTIVATE,
     )
-    from ..contracts import on_workspace_changed
+    from ..contracts import on_workspace_changed, workspace_get_root
 else:  # pragma: no cover - script-mode import
     from bus import BusMixin
     from bus_contract import (
@@ -50,7 +50,7 @@ else:  # pragma: no cover - script-mode import
         SVC_CONSOLE_RUN,
         SVC_NAV_ACTIVATE,
     )
-    from contracts import on_workspace_changed
+    from contracts import on_workspace_changed, workspace_get_root
 
 
 # Terminal escape sequences that can interleave with shell output (OSC title /
@@ -418,7 +418,12 @@ class ConsoleTab(BusMixin, Vertical):
         self._cwd = Path.cwd()
         self._disposers = []
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
+        try:
+            root = await workspace_get_root(self.bus)
+            self.cwd = Path(root)
+        except Exception:
+            pass
         self._disposers = [
             self.bus.provide(SVC_CONSOLE_RUN, self._svc_run),
             self.bus.provide(SVC_CONSOLE_FORCE_COMPLETE, self._svc_force_complete),

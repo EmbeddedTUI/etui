@@ -240,14 +240,9 @@ class EtuiApp(App):
     async def on_mount(self) -> None:
         await self._mount_plugin_tabs()
 
-        probe_tab = self.query_one(ProbeTab)
-        probe_tab.apply_settings(self.settings_manager.settings["probe"])
         wrap = bool(self.settings_manager.get("ui", "word_wrap", False))
         for log in self.query(RichLog):
             log.wrap = wrap
-        await self.query_one(LldbTab).set_theme(
-            self.settings_manager.get("lldb", "theme", "vibrant")
-        )
         # Always start from the process CWD; offer to restore the previously
         # saved workspace root if it still exists and differs from CWD.
         saved = self.workspace_root

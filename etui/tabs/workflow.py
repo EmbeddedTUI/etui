@@ -35,8 +35,8 @@ if __package__:
     from ..workflow.safety import DenylistChecker
     from ..workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
     from ..bus import BusMixin, NoProvider, RpcError
-    from ..bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN
-    from ..contracts import on_workspace_changed
+    from ..bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN, WorkspaceChanged
+    from ..contracts import on_workspace_changed, workspace_get_root
     from ..plugin import CancelOnLeaveMixin
 else:  # pragma: no cover - fallback for non-package execution
     from workflow.engine import ICONS, StepState, WorkflowEngine
@@ -44,8 +44,8 @@ else:  # pragma: no cover - fallback for non-package execution
     from workflow.safety import DenylistChecker
     from workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
     from bus import BusMixin, NoProvider, RpcError
-    from bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN
-    from contracts import on_workspace_changed
+    from bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN, WorkspaceChanged
+    from contracts import on_workspace_changed, workspace_get_root
     from plugin import CancelOnLeaveMixin
 
 
@@ -267,8 +267,13 @@ class WorkflowTab(CancelOnLeaveMixin, BusMixin, Vertical):
             yield Button("Abort", id="btn-workflow-abort", variant="warning", disabled=True)
             yield Button("Prev", id="btn-workflow-prev", disabled=True)
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         super().on_mount()
+        try:
+            root = await workspace_get_root(self.bus)
+            self._on_workspace_changed(WorkspaceChanged(root=root))
+        except Exception:
+            pass
         self._workspace_disposer = on_workspace_changed(
             self.bus,
             self._on_workspace_changed,
