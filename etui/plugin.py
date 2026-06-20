@@ -46,6 +46,7 @@ class TabSpec:
     order: int = 1000  # sort hint; built-ins reserve order < 1000
     after: str | None = None  # optional pane id to place this after
     help_doc: Path | None = None  # absolute path to the plugin's markdown guide
+    provides: tuple[str, ...] = ()
 
 
 class EtuiTabPlugin:

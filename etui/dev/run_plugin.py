@@ -193,7 +193,7 @@ class StandaloneApp(App):
             # which is the namespace its provide() calls expect. Prefer it over a
             # synthesized spec id so a bare-widget ref still scopes correctly.
             scope_id = getattr(widget, "id", None) or spec.id
-            self._scoped = ScopedBus(self.bus, scope_id)
+            self._scoped = ScopedBus(self.bus, scope_id, spec.provides)
             widget._bus = self._scoped  # BusMixin walks parents for _bus
             yield TabPane(spec.title, widget, id=spec.id)
         yield Footer()

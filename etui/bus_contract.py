@@ -17,6 +17,8 @@ TOPIC_TAB_ACTIVATED = "tab.activated"      # payload: TabEvent
 TOPIC_TAB_DEACTIVATED = "tab.deactivated"  # payload: TabEvent
 TOPIC_WORKSPACE_CHANGED = "workspace.changed"  # payload: WorkspaceChanged
 TOPIC_THEME_CHANGED = "theme.changed"          # payload: ThemeChanged
+TOPIC_DEBUG_GDBSERVER_READY = "debug.gdbserver_ready"  # payload: GdbserverReady
+TOPIC_DEBUG_GDBSERVER_DOWN = "debug.gdbserver_down"    # payload: GdbserverDown
 
 # ---- Services (imperative verbs) -----------------------------------------
 # console.run(command: str, timeout: float | None = None) -> int
@@ -40,6 +42,10 @@ SVC_WORKSPACE_GET_ROOT = "workspace.get_root"
 SVC_THEME_SET = "theme.set"
 # theme.get() -> str
 SVC_THEME_GET = "theme.get"
+# debug.restart_probe() -> None
+SVC_DEBUG_RESTART_PROBE = "debug.restart_probe"
+# debug.get_gdbserver_status() -> dict | None
+SVC_DEBUG_GET_GDBSERVER_STATUS = "debug.get_gdbserver_status"
 
 
 @dataclass(frozen=True)
@@ -60,3 +66,15 @@ class WorkspaceChanged:
 @dataclass(frozen=True)
 class ThemeChanged:
     name: str
+
+
+@dataclass(frozen=True)
+class GdbserverReady:
+    port: int
+    arch: str | None
+    iface: str | None = None
+
+
+@dataclass(frozen=True)
+class GdbserverDown:
+    iface: str | None = None

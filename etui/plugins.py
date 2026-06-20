@@ -23,6 +23,11 @@ else:
 
 log = logging.getLogger("etui.plugins")
 ENTRY_GROUP = "etui.tabs"
+ALLOWED_PROVIDES = {
+    "debug.restart_probe",
+    "debug.get_gdbserver_status",
+    "tools.status",
+}
 
 
 class ScopedBus:
@@ -33,18 +38,19 @@ class ScopedBus:
     Tracks all disposers created by the plugin to clean them up on unmount.
     """
 
-    def __init__(self, bus: MessageBus, plugin_id: str) -> None:
+    def __init__(self, bus: MessageBus, plugin_id: str, provides: tuple[str, ...] = ()) -> None:
         self._bus = bus
         self._id = plugin_id
         bus_id = plugin_id.replace("-", ".")
         self._prefix = f"{bus_id}."
+        self._provides = set(provides)
         self._disposers: list[Disposer] = []
 
     def provide(self, service: str, fn: RpcProvider) -> Disposer:
         """Register the plugin as a provider for a service starting with its prefix."""
-        if not service.startswith(self._prefix):
+        if not (service.startswith(self._prefix) or service in self._provides):
             raise PermissionError(
-                f"plugin may only provide '{self._prefix}*', got {service!r}"
+                f"plugin may only provide '{self._prefix}*' or allowlisted services, got {service!r}"
             )
         disp = self._bus.provide(service, fn)
         self._disposers.append(disp)
@@ -124,6 +130,12 @@ class PluginManager:
             return self._fail(ep.name, f"tab id {spec.id!r} must start with 'plugin-'")
         if any(lp.spec.id == spec.id for lp in self.loaded):
             return self._fail(ep.name, f"duplicate tab id {spec.id!r}")
+        for service in spec.provides:
+            if service not in ALLOWED_PROVIDES:
+                return self._fail(
+                    ep.name,
+                    f"plugin provides unauthorized service name {service!r}",
+                )
         self.loaded.append(LoadedPlugin(ep.name, _dist_of(ep), plugin, spec))
 
     def _fail(self, name: str, message: str) -> None:

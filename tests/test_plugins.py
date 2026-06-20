@@ -82,6 +82,30 @@ class BadIdPlugin(EtuiTabPlugin):
         return Widget()
 
 
+class UnauthorizedProvidesPlugin(EtuiTabPlugin):
+    def spec(self) -> TabSpec:
+        return TabSpec(
+            id="plugin-bad-provides",
+            title="Bad Provides Plugin",
+            provides=("core.unauthorized",),
+        )
+
+    def create_widget(self) -> Widget:
+        return Widget()
+
+
+class AuthorizedProvidesPlugin(EtuiTabPlugin):
+    def spec(self) -> TabSpec:
+        return TabSpec(
+            id="plugin-good-provides",
+            title="Good Provides Plugin",
+            provides=("debug.restart_probe",),
+        )
+
+    def create_widget(self) -> Widget:
+        return Widget()
+
+
 class MockEntryPoint:
     def __init__(self, name: str, plugin_class: type, dist: Any = None) -> None:
         self.name = name
@@ -142,6 +166,21 @@ class PluginDiscoveryTests(unittest.TestCase):
         self.assertIn("good2", errors_dict)
         self.assertIn("duplicate tab id", errors_dict["good2"])
 
+    @patch("etui.plugins._entry_points")
+    def test_discover_skips_unauthorized_provides_plugin(self, mock_eps: MagicMock) -> None:
+        mock_eps.return_value = [
+            MockEntryPoint("bad_provides", UnauthorizedProvidesPlugin),
+            MockEntryPoint("good_provides", AuthorizedProvidesPlugin),
+        ]
+        pm = PluginManager()
+        pm.discover()
+
+        self.assertEqual(len(pm.loaded), 1)
+        self.assertEqual(pm.loaded[0].name, "good_provides")
+        self.assertEqual(len(pm.errors), 1)
+        self.assertEqual(pm.errors[0][0], "bad_provides")
+        self.assertIn("unauthorized service name", pm.errors[0][1])
+
 
 class ScopedBusTests(unittest.IsolatedAsyncioTestCase):
     def test_scoped_bus_provides_enforced_namespace(self) -> None:
@@ -195,6 +234,18 @@ class ScopedBusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res, "val")
         self.assertEqual(received_kwargs["section"], "plugin.good.my_sec")
         self.assertEqual(received_kwargs["key"], "my_key")
+
+    def test_scoped_bus_provides_allowlist(self) -> None:
+        bus = MessageBus()
+        sb = ScopedBus(bus, "plugin-good", provides=("debug.restart_probe",))
+
+        # Allowlisted service should be allowed
+        sb.provide("debug.restart_probe", lambda: 42)
+        self.assertTrue(bus.has("debug.restart_probe"))
+
+        # Non-allowlisted service should be blocked
+        with self.assertRaises(PermissionError):
+            sb.provide("debug.get_gdbserver_status", lambda: 0)
 
     def test_scoped_bus_dispose_all(self) -> None:
         bus = MessageBus()

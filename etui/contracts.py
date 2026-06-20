@@ -17,12 +17,18 @@ if TYPE_CHECKING:
     from .bus import Disposer, Event
 
 from .bus_contract import (
+    SVC_DEBUG_GET_GDBSERVER_STATUS,
+    SVC_DEBUG_RESTART_PROBE,
     SVC_THEME_GET,
     SVC_THEME_SET,
     SVC_WORKSPACE_GET_ROOT,
     SVC_WORKSPACE_SET_ROOT,
+    TOPIC_DEBUG_GDBSERVER_DOWN,
+    TOPIC_DEBUG_GDBSERVER_READY,
     TOPIC_THEME_CHANGED,
     TOPIC_WORKSPACE_CHANGED,
+    GdbserverDown,
+    GdbserverReady,
     ThemeChanged,
     WorkspaceChanged,
 )
@@ -96,7 +102,49 @@ def on_theme_changed(
     return bus.subscribe(TOPIC_THEME_CHANGED, _handle)
 
 
+async def debug_restart_probe(bus: ContractBus) -> None:
+    """Ask the probe provider to restart the probe gdbserver."""
+    await bus.call(SVC_DEBUG_RESTART_PROBE)
+
+
+async def debug_get_gdbserver_status(bus: ContractBus) -> dict | None:
+    """Return the current gdbserver status dict (or None if down)."""
+    return await bus.call(SVC_DEBUG_GET_GDBSERVER_STATUS)  # type: ignore[return-value]
+
+
+def on_debug_gdbserver_ready(
+    bus: ContractBus,
+    handler: Callable[[GdbserverReady], None],
+) -> "Disposer":
+    """Subscribe to gdbserver ready events with a typed payload handler."""
+
+    def _handle(event: "Event") -> None:
+        payload = event.payload
+        if isinstance(payload, GdbserverReady):
+            handler(payload)
+
+    return bus.subscribe(TOPIC_DEBUG_GDBSERVER_READY, _handle)
+
+
+def on_debug_gdbserver_down(
+    bus: ContractBus,
+    handler: Callable[[GdbserverDown], None],
+) -> "Disposer":
+    """Subscribe to gdbserver down events with a typed payload handler."""
+
+    def _handle(event: "Event") -> None:
+        payload = event.payload
+        if isinstance(payload, GdbserverDown):
+            handler(payload)
+
+    return bus.subscribe(TOPIC_DEBUG_GDBSERVER_DOWN, _handle)
+
+
 __all__ = [
+    "debug_get_gdbserver_status",
+    "debug_restart_probe",
+    "on_debug_gdbserver_down",
+    "on_debug_gdbserver_ready",
     "on_theme_changed",
     "on_workspace_changed",
     "theme_get",

@@ -298,7 +298,7 @@ class EtuiApp(App):
                     from .plugins import ScopedBus
                 else:
                     from plugins import ScopedBus
-                lp.scoped_bus = ScopedBus(self.bus, lp.spec.id)
+                lp.scoped_bus = ScopedBus(self.bus, lp.spec.id, lp.spec.provides)
                 widget._bus = lp.scoped_bus
 
                 target = lp.spec.after
