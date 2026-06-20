@@ -15,9 +15,11 @@ if TYPE_CHECKING:
 if __package__:
     from .bus import BusMixin, MessageBus, NoProvider, RpcError, RpcTimeout
     from . import bus_contract
+    from .plugin_kit import ToolWarningBanner
 else:
     from bus import BusMixin, MessageBus, NoProvider, RpcError, RpcTimeout
     import bus_contract
+    from plugin_kit import ToolWarningBanner
 
 API_VERSION = 1  # MAJOR contract version; bump on breaking change
 
@@ -27,6 +29,7 @@ __all__ = [
     "TabSpec",
     "EtuiTabPlugin",
     "CancelOnLeaveMixin",
+    "ToolWarningBanner",
     # Re-exported bus primitives so plugins have one import root.
     "BusMixin",
     "MessageBus",

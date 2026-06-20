@@ -109,9 +109,9 @@ class GitTab(Vertical):
 
     def compose(self) -> ComposeResult:
         if __package__:
-            from .tools import ToolWarningBanner
+            from ..plugin import ToolWarningBanner
         else:
-            from tools import ToolWarningBanner
+            from plugin import ToolWarningBanner
         yield ToolWarningBanner("git", "Git", id="git-tool-warning")
 
         with Horizontal(id="git-repo-select"):

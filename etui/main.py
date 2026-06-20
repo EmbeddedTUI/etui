@@ -436,9 +436,9 @@ class EtuiApp(App):
         # Update any tool warning banners in the active pane
         try:
             if __package__:
-                from .tabs.tools import ToolWarningBanner
+                from .plugin import ToolWarningBanner
             else:
-                from tabs.tools import ToolWarningBanner
+                from plugin import ToolWarningBanner
             for banner in event.pane.query(ToolWarningBanner):
                 banner.check_status()
         except Exception:

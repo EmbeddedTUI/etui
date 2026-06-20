@@ -335,9 +335,9 @@ class LldbTab(Vertical):
 
     def compose(self) -> ComposeResult:
         if __package__:
-            from .tools import ToolWarningBanner
+            from ..plugin import ToolWarningBanner
         else:
-            from tools import ToolWarningBanner
+            from plugin import ToolWarningBanner
         yield ToolWarningBanner("lldb", "LLDB", id="lldb-tool-warning")
         with Horizontal(id="lldb-toolbar"):
             yield Static("Firmware ELF:", id="lldb-executable-label")

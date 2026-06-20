@@ -389,9 +389,9 @@ class ProbeTab(Vertical):
 
     def compose(self) -> ComposeResult:
         if __package__:
-            from .tools import ToolWarningBanner
+            from ..plugin import ToolWarningBanner
         else:
-            from tools import ToolWarningBanner
+            from plugin import ToolWarningBanner
         yield ToolWarningBanner("openocd", "OpenOCD", id="openocd-tool-warning")
 
         with Horizontal(id="probe-layout"):
