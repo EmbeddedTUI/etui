@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  test:
+    name: Core and plugin workspace
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up PDM
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: "3.13"
+          cache: true
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libusb-1.0-0-dev
+
+      - name: Install Project Dependencies
+        run: |
+          pdm install --frozen-lockfile
+
+      - name: Verify Plugin Workspace Scaffold
+        run: |
+          test -d plugins
+
+      - name: Run Self Test
+        run: |
+          pdm run python -m etui --self-test
