@@ -15,7 +15,6 @@ from etui.main import EtuiApp
 from etui.tabs.files import FilesTab
 from etui.tabs.console import ConsoleTab
 from etui.tabs.git import GitTab
-from etui.tabs.cmake import CMakeTab
 from etui.tabs.github import GitHubTab
 from etui.tabs.workflow import WorkflowTab
 
@@ -72,9 +71,6 @@ class WorkspaceRootTests(unittest.TestCase):
         stack = ExitStack()
         stack.enter_context(patch.object(GitTab, "validate_and_load_repo"))
         stack.enter_context(patch("etui.main.Path.cwd", return_value=self.workspace_root))
-        stack.enter_context(
-            patch.object(CMakeTab, "change_repository", new=_noop_change_repository)
-        )
         stack.enter_context(
             patch.object(GitHubTab, "change_repository", new=_noop_change_repository)
         )

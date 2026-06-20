@@ -28,7 +28,6 @@ if __package__:
     from .tabs.serial import SerialTab
     from .tabs.git import GitTab, RepositoryChanged
     from .tabs.github import GitHubTab
-    from .tabs.cmake import CMakeTab
     from .tabs.settings import SettingsTab
     from .tabs.workflow import WorkflowTab
     from .settings import SettingsManager
@@ -64,7 +63,6 @@ else:
     from tabs.serial import SerialTab
     from tabs.git import GitTab, RepositoryChanged
     from tabs.github import GitHubTab
-    from tabs.cmake import CMakeTab
     from tabs.settings import SettingsTab
     from tabs.workflow import WorkflowTab
     from settings import SettingsManager
@@ -349,8 +347,6 @@ class EtuiApp(App):
                 yield GitTab()
             with TabPane("GitHub", id="github"):
                 yield GitHubTab()
-            with TabPane("CMake", id="cmake"):
-                yield CMakeTab()
             with TabPane("Workflow", id="workflow"):
                 yield WorkflowTab()
             with TabPane("Serial", id="serial"):
@@ -508,18 +504,6 @@ class EtuiApp(App):
                     self.run_worker(
                         github_tab.cancel_active_operation(),
                         name="cancel-github-operation",
-                        exit_on_error=False,
-                    )
-            except Exception:
-                pass
-
-        if old_pane_id == "cmake" and pane_id != "cmake":
-            try:
-                cmake_tab = self.query_one(CMakeTab)
-                if cmake_tab.busy:
-                    self.run_worker(
-                        cmake_tab.cancel_active_operation(),
-                        name="cancel-cmake-operation",
                         exit_on_error=False,
                     )
             except Exception:

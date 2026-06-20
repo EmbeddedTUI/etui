@@ -15,15 +15,12 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, Button, Input, DataTable, RichLog
 from textual.worker import Worker, WorkerCancelled
 
-if __package__:
-    from ..bus_contract import WorkspaceChanged
-    from ..contracts import on_workspace_changed, workspace_get_root
-else:  # pragma: no cover - script-mode import
-    from bus_contract import WorkspaceChanged
-    from contracts import on_workspace_changed, workspace_get_root
+from etui.plugin import CancelOnLeaveMixin, BusMixin, ToolWarningBanner
+from etui.bus_contract import WorkspaceChanged
+from etui.contracts import on_workspace_changed, workspace_get_root
 
 
-class CMakeTab(Vertical):
+class CMakeTab(CancelOnLeaveMixin, BusMixin, Vertical):
     """ Project CMake build configuration and dashboard """
 
     DEFAULT_CSS = """
@@ -88,10 +85,6 @@ class CMakeTab(Vertical):
         self._workspace_disposer = None
 
     def compose(self) -> ComposeResult:
-        if __package__:
-            from ..plugin import ToolWarningBanner
-        else:
-            from plugin import ToolWarningBanner
         yield ToolWarningBanner("cmake", "CMake", id="cmake-tool-warning")
 
         with Vertical(id="cmake-header-bar"):
@@ -118,7 +111,8 @@ class CMakeTab(Vertical):
                     yield Button("Cancel", id="btn-cmake-cancel", variant="warning", disabled=True)
 
     async def on_mount(self) -> None:
-        bus = getattr(self.app, "bus", None)
+        super().on_mount()
+        bus = self.bus
         if bus is not None:
             try:
                 root = await workspace_get_root(bus)
@@ -138,6 +132,7 @@ class CMakeTab(Vertical):
             self._workspace_disposer()
             self._workspace_disposer = None
         await self.cancel_active_operation()
+        super().on_unmount()
 
     def _on_workspace_changed(self, event) -> None:
         repo_path = Path(event.root).resolve()

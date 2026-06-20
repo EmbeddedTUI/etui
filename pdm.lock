@@ -5,7 +5,7 @@
 groups = ["default", "default-tabs", "dev", "plugins"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:f3950951b67dd58fddf2560e09dda78f8869258642536cde3c73dd8d1e80acf1"
+content_hash = "sha256:0c6d703dca28a20a725ef2985131bb36e54ece48eff705ca3458964b6dd2f6f6"
 
 [[metadata.targets]]
 requires_python = ">=3.13,<3.15"
@@ -454,6 +454,18 @@ dependencies = [
 files = [
     {file = "dacite-1.9.2-py3-none-any.whl", hash = "sha256:053f7c3f5128ca2e9aceb66892b1a3c8936d02c686e707bee96e19deef4bc4a0"},
     {file = "dacite-1.9.2.tar.gz", hash = "sha256:6ccc3b299727c7aa17582f0021f6ae14d5de47c7227932c47fec4cdfefd26f09"},
+]
+
+[[package]]
+name = "etui-cmake"
+version = "0.1.0"
+requires_python = ">=3.13,<3.15"
+path = "./plugins/etui-cmake"
+summary = "CMake Project Build Manager Tab Plugin for etui"
+groups = ["default-tabs"]
+dependencies = [
+    "etui>=0.3.0",
+    "textual>=8.1.1",
 ]
 
 [[package]]

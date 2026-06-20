@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from etui.tabs.cmake import CMakeTab
+from etui_cmake.tab import CMakeTab
 from textual.app import App, ComposeResult
 from textual.widgets import Input, RichLog
 
