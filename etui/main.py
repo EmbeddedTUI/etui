@@ -26,7 +26,6 @@ if __package__:
     from .tabs.lldb import LldbTab, ProbeRestartRequested
     from .tabs.theme import ThemeTab
     from .tabs.git import GitTab, RepositoryChanged
-    from .tabs.github import GitHubTab
     from .tabs.settings import SettingsTab
     from .settings import SettingsManager
     from .bus import MessageBus
@@ -59,7 +58,6 @@ else:
     from tabs.lldb import LldbTab, ProbeRestartRequested
     from tabs.theme import ThemeTab
     from tabs.git import GitTab, RepositoryChanged
-    from tabs.github import GitHubTab
     from tabs.settings import SettingsTab
     from settings import SettingsManager
     from bus import MessageBus
@@ -328,8 +326,6 @@ class EtuiApp(App):
                 yield ConsoleTab()
             with TabPane("Git", id="git"):
                 yield GitTab()
-            with TabPane("GitHub", id="github"):
-                yield GitHubTab()
             with TabPane("Probe", id="probe"):
                 yield ProbeTab()
             with TabPane("LLDB", id="lldb"):
@@ -438,7 +434,7 @@ class EtuiApp(App):
                 self.query_one("#txt-repo-path").focus()
             except Exception:
                 pass
-        elif pane_id == "github":
+        elif pane_id == "plugin-github":
             try:
                 self.query_one("#btn-mode-issues").focus()
             except Exception:
@@ -461,18 +457,6 @@ class EtuiApp(App):
                     self.run_worker(
                         git_tab.cancel_active_operation(),
                         name="cancel-git-operation",
-                        exit_on_error=False,
-                    )
-            except Exception:
-                pass
-
-        if old_pane_id == "github" and pane_id != "github":
-            try:
-                github_tab = self.query_one(GitHubTab)
-                if github_tab.busy:
-                    self.run_worker(
-                        github_tab.cancel_active_operation(),
-                        name="cancel-github-operation",
                         exit_on_error=False,
                     )
             except Exception:

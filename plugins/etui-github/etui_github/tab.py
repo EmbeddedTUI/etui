@@ -17,15 +17,12 @@ from textual.containers import Horizontal, Vertical
 from textual.worker import Worker, WorkerCancelled
 from textual.widgets import Button, DataTable, Input, Label, RichLog
 
-if __package__:
-    from ..bus_contract import WorkspaceChanged
-    from ..contracts import on_workspace_changed, workspace_get_root
-else:  # pragma: no cover - script-mode import
-    from bus_contract import WorkspaceChanged
-    from contracts import on_workspace_changed, workspace_get_root
+from etui.plugin import CancelOnLeaveMixin, BusMixin, ToolWarningBanner
+from etui.bus_contract import WorkspaceChanged
+from etui.contracts import on_workspace_changed, workspace_get_root
 
 
-class GitHubTab(Vertical):
+class GitHubTab(CancelOnLeaveMixin, BusMixin, Vertical):
     """GitHub companion tab powered by the gh CLI."""
 
     PAGE_SIZE = 50
@@ -88,10 +85,6 @@ class GitHubTab(Vertical):
         self._workspace_disposer = None
 
     def compose(self) -> ComposeResult:
-        if __package__:
-            from ..plugin import ToolWarningBanner
-        else:
-            from plugin import ToolWarningBanner
         yield ToolWarningBanner("gh", "GitHub CLI", id="gh-tool-warning")
 
         with Horizontal(id="github-navigation-bar"):
@@ -118,7 +111,8 @@ class GitHubTab(Vertical):
                         )
 
     async def on_mount(self) -> None:
-        bus = getattr(self.app, "bus", None)
+        super().on_mount()
+        bus = self.bus
         if bus is not None:
             try:
                 root = await workspace_get_root(bus)
@@ -137,6 +131,7 @@ class GitHubTab(Vertical):
             self._workspace_disposer()
             self._workspace_disposer = None
         await self.cancel_active_operation()
+        super().on_unmount()
 
     def _on_workspace_changed(self, event) -> None:
         self.repo_path = Path(event.root).resolve()

@@ -2,7 +2,7 @@
 # Copyright (c) 2026 32bitmico LLC
 
 import unittest
-from etui.tabs.github import GitHubTab
+from etui_github.tab import GitHubTab
 
 class GitHubTabUnitTests(unittest.TestCase):
     def test_parse_github_remote_https(self) -> None:
