@@ -15,6 +15,12 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Label, Button, Input, DataTable, RichLog
 from textual.worker import Worker, WorkerCancelled
 
+if __package__:
+    from ..contracts import on_workspace_changed
+else:  # pragma: no cover - script-mode import
+    from contracts import on_workspace_changed
+
+
 class CMakeTab(Vertical):
     """ Project CMake build configuration and dashboard """
 
@@ -77,6 +83,7 @@ class CMakeTab(Vertical):
         self.busy: bool = False
         self._active_subprocess: asyncio.subprocess.Process | None = None
         self._operation_worker: Worker[None] | None = None
+        self._workspace_disposer = None
 
     def compose(self) -> ComposeResult:
         if __package__:
@@ -109,12 +116,35 @@ class CMakeTab(Vertical):
                     yield Button("Cancel", id="btn-cmake-cancel", variant="warning", disabled=True)
 
     def on_mount(self) -> None:
+        bus = getattr(self.app, "bus", None)
+        if bus is not None:
+            self._workspace_disposer = on_workspace_changed(
+                bus,
+                self._on_workspace_changed,
+            )
         table = self.query_one(DataTable)
         table.add_columns("Target Name", "Type")
         self._set_controls_enabled(False)
 
     async def on_unmount(self) -> None:
+        if self._workspace_disposer is not None:
+            self._workspace_disposer()
+            self._workspace_disposer = None
         await self.cancel_active_operation()
+
+    def _on_workspace_changed(self, event) -> None:
+        repo_path = Path(event.root).resolve()
+        self.repo_path = repo_path
+        source_input = self.query_one("#txt-cmake-source", Input)
+        build_input = self.query_one("#txt-cmake-build", Input)
+        if (repo_path / "CMakeLists.txt").is_file():
+            source_input.value = str(repo_path)
+            build_input.value = "build"
+            self.build_path = (repo_path / "build").resolve()
+        else:
+            source_input.value = ""
+            build_input.value = ""
+            self.build_path = None
 
     async def change_repository(self, repo_path: Path) -> None:
         await self.cancel_active_operation()

@@ -13,6 +13,11 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, DataTable, Input, Label, RichLog
 from textual.worker import Worker
 
+if __package__:
+    from ..contracts import on_workspace_changed
+else:  # pragma: no cover - script-mode import
+    from contracts import on_workspace_changed
+
 
 class VenvTab(Vertical):
     """Manage an explicitly selected external PDM project."""
@@ -77,6 +82,7 @@ class VenvTab(Vertical):
         self._active_subprocess: asyncio.subprocess.Process | None = None
         self._operation_worker: Worker[None] | None = None
         self._selection_worker: Worker[None] | None = None
+        self._workspace_disposer = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="venv-project-select"):
@@ -130,6 +136,12 @@ class VenvTab(Vertical):
         return self._busy
 
     def on_mount(self) -> None:
+        bus = getattr(self.app, "bus", None)
+        if bus is not None:
+            self._workspace_disposer = on_workspace_changed(
+                bus,
+                self._on_workspace_changed,
+            )
         self.query_one("#venv-package-table", DataTable).add_columns(
             "Package",
             "Version",
@@ -142,11 +154,18 @@ class VenvTab(Vertical):
         self._set_status("Select an external PDM project to begin.")
 
     async def on_unmount(self) -> None:
+        if self._workspace_disposer is not None:
+            self._workspace_disposer()
+            self._workspace_disposer = None
         if self._selection_worker is not None:
             self._selection_worker.cancel()
         await self.cancel_active_operation()
         if self._operation_worker is not None:
             self._operation_worker.cancel()
+
+    def _on_workspace_changed(self, event) -> None:
+        root = event.root
+        self.query_one("#venv-project-path", Input).value = root
 
     @staticmethod
     def build_pdm_command(

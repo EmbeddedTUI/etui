@@ -18,10 +18,34 @@ from etui.bus_contract import (
     SVC_NAV_ACTIVATE,
     SVC_SETTINGS_GET,
     SVC_SETTINGS_SET,
+    SVC_WORKSPACE_GET_ROOT,
+    SVC_WORKSPACE_SET_ROOT,
     TOPIC_TAB_ACTIVATED,
     TOPIC_TAB_DEACTIVATED,
     TabEvent,
 )
+
+
+def _run_textual_test(coro) -> None:
+    loop = asyncio.new_event_loop()
+    heartbeat = None
+
+    def wake_loop() -> None:
+        nonlocal heartbeat
+        heartbeat = loop.call_later(0.05, wake_loop)
+
+    try:
+        asyncio.set_event_loop(loop)
+        heartbeat = loop.call_later(0.05, wake_loop)
+        loop.run_until_complete(coro)
+    finally:
+        if heartbeat is not None:
+            heartbeat.cancel()
+        executor = getattr(loop, "_default_executor", None)
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+        loop.close()
+        asyncio.set_event_loop(None)
 
 
 class GoodPlugin(EtuiTabPlugin):
@@ -308,6 +332,8 @@ class HostServiceCheckingWidget(BusMixin, Widget):
                 SVC_SETTINGS_SET,
                 SVC_HELP_ADD_ENTRY,
                 SVC_CONSOLE_RUN,
+                SVC_WORKSPACE_GET_ROOT,
+                SVC_WORKSPACE_SET_ROOT,
             )
             if not self.bus.has(service)
         ]
@@ -321,9 +347,14 @@ class HostServiceCheckingPlugin(EtuiTabPlugin):
         return HostServiceCheckingWidget()
 
 
-class PluginMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
+class PluginMountIntegrationTests(unittest.TestCase):
     @patch("etui.plugins._entry_points")
-    async def test_host_services_available_before_plugin_on_mount(self, mock_eps: MagicMock) -> None:
+    def test_host_services_available_before_plugin_on_mount(self, mock_eps: MagicMock) -> None:
+        _run_textual_test(
+            self._test_host_services_available_before_plugin_on_mount(mock_eps)
+        )
+
+    async def _test_host_services_available_before_plugin_on_mount(self, mock_eps: MagicMock) -> None:
         from etui.main import EtuiApp
         from etui.settings import SettingsManager
         import tempfile
@@ -345,7 +376,10 @@ class PluginMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(HostServiceCheckingWidget.missing_services, [])
 
     @patch("etui.plugins._entry_points")
-    async def test_plugin_mount_integration(self, mock_eps: MagicMock) -> None:
+    def test_plugin_mount_integration(self, mock_eps: MagicMock) -> None:
+        _run_textual_test(self._test_plugin_mount_integration(mock_eps))
+
+    async def _test_plugin_mount_integration(self, mock_eps: MagicMock) -> None:
         from etui.main import EtuiApp
         from etui.settings import SettingsManager
         from textual.widgets import TabbedContent
@@ -378,7 +412,10 @@ class PluginMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(mock_widget.bus._id, "plugin-mocktab")
 
     @patch("etui.plugins._entry_points")
-    async def test_plugin_settings_rewriting_end_to_end(self, mock_eps: MagicMock) -> None:
+    def test_plugin_settings_rewriting_end_to_end(self, mock_eps: MagicMock) -> None:
+        _run_textual_test(self._test_plugin_settings_rewriting_end_to_end(mock_eps))
+
+    async def _test_plugin_settings_rewriting_end_to_end(self, mock_eps: MagicMock) -> None:
         from etui.main import EtuiApp
         from etui.settings import SettingsManager
         import tempfile
@@ -405,7 +442,10 @@ class PluginMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(retrieved, "hello_value")
 
     @patch("etui.plugins._entry_points")
-    async def test_plugin_cleanup_on_app_unmount(self, mock_eps: MagicMock) -> None:
+    def test_plugin_cleanup_on_app_unmount(self, mock_eps: MagicMock) -> None:
+        _run_textual_test(self._test_plugin_cleanup_on_app_unmount(mock_eps))
+
+    async def _test_plugin_cleanup_on_app_unmount(self, mock_eps: MagicMock) -> None:
         from etui.main import EtuiApp
         from etui.settings import SettingsManager
         import tempfile
@@ -433,7 +473,10 @@ class PluginMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(lp.scoped_bus._disposers), 0)
 
     @patch("etui.plugins._entry_points")
-    async def test_plugin_help_registration(self, mock_eps: MagicMock) -> None:
+    def test_plugin_help_registration(self, mock_eps: MagicMock) -> None:
+        _run_textual_test(self._test_plugin_help_registration(mock_eps))
+
+    async def _test_plugin_help_registration(self, mock_eps: MagicMock) -> None:
         from etui.main import EtuiApp
         from etui.settings import SettingsManager
         from etui.tabs.help import HelpTab, OpenDocFile, _MENU
@@ -519,4 +562,3 @@ class PluginMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     help_tab.post_message.assert_not_called()
                 finally:
                     help_tab.post_message = original_post_message
-

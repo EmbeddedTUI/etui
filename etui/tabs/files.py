@@ -141,8 +141,11 @@ class FilesTab(Vertical):
 
     def on_mount(self) -> None:
         if hasattr(self.app, "workspace_root") and self.app.workspace_root:
-            self.query_one("LeftWidget").path = Path(self.app.workspace_root)
-            self.query_one("#txt-workspace-root", Input).value = self.app.workspace_root
+            self._apply_workspace_root(self.app.workspace_root)
+
+    def _apply_workspace_root(self, root: str) -> None:
+        self.query_one("LeftWidget").path = Path(root)
+        self.query_one("#txt-workspace-root", Input).value = root
 
     def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
         event.stop()
@@ -186,7 +189,8 @@ class FilesTab(Vertical):
 
         if hasattr(self.app, "set_workspace_root"):
             await self.app.set_workspace_root(str(path))
-            self.notify(f"Workspace root set to {path}")
+        self._apply_workspace_root(str(path))
+        self.notify(f"Workspace root set to {path}")
 
     def open_file(self, path: Path) -> None:
         """Display *path* in the viewer without changing the directory tree root."""

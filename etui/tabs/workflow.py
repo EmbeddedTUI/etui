@@ -36,6 +36,7 @@ if __package__:
     from ..workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
     from ..bus import BusMixin, NoProvider, RpcError
     from ..bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN
+    from ..contracts import on_workspace_changed
     from ..plugin import CancelOnLeaveMixin
 else:  # pragma: no cover - fallback for non-package execution
     from workflow.engine import ICONS, StepState, WorkflowEngine
@@ -44,6 +45,7 @@ else:  # pragma: no cover - fallback for non-package execution
     from workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
     from bus import BusMixin, NoProvider, RpcError
     from bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN
+    from contracts import on_workspace_changed
     from plugin import CancelOnLeaveMixin
 
 
@@ -241,6 +243,7 @@ class WorkflowTab(CancelOnLeaveMixin, BusMixin, Vertical):
         self._current_operation_name: str | None = None
         self._aborted_steps: set[str] = set()
         self._workflow_aborted: bool = False
+        self._workspace_disposer = None
 
     # ------------------------------------------------------------------ UI
     def compose(self) -> ComposeResult:
@@ -266,11 +269,18 @@ class WorkflowTab(CancelOnLeaveMixin, BusMixin, Vertical):
 
     def on_mount(self) -> None:
         super().on_mount()
+        self._workspace_disposer = on_workspace_changed(
+            self.bus,
+            self._on_workspace_changed,
+        )
         self._sync_controls()
         if self.repo_path is None:
             self._scan_workflows()
 
     async def on_unmount(self) -> None:
+        if self._workspace_disposer is not None:
+            self._workspace_disposer()
+            self._workspace_disposer = None
         await self.cancel_active_operation()
         super().on_unmount()
 
@@ -281,6 +291,21 @@ class WorkflowTab(CancelOnLeaveMixin, BusMixin, Vertical):
     async def change_repository(self, repo_path: Path) -> None:
         await self.cancel_active_operation()
         self.repo_path = repo_path.resolve()
+        self.workflow = None
+        self.engine = None
+        self.run_all = False
+        try:
+            self.query_one("#workflow-step-output", RichLog).clear()
+            self.query_one("#workflow-steps-view", ListView).clear()
+            self.query_one("#workflow-step-desc", Markdown).update("")
+            self.query_one("#workflow-step-commands", Static).update("")
+        except Exception:
+            pass
+        self._scan_workflows()
+        self._sync_controls()
+
+    def _on_workspace_changed(self, event) -> None:
+        self.repo_path = Path(event.root).resolve()
         self.workflow = None
         self.engine = None
         self.run_all = False

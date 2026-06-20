@@ -15,6 +15,7 @@ from dataclasses import dataclass
 TOPIC_REPO_CHANGED = "repo.changed"        # payload: RepoChanged
 TOPIC_TAB_ACTIVATED = "tab.activated"      # payload: TabEvent
 TOPIC_TAB_DEACTIVATED = "tab.deactivated"  # payload: TabEvent
+TOPIC_WORKSPACE_CHANGED = "workspace.changed"  # payload: WorkspaceChanged
 
 # ---- Services (imperative verbs) -----------------------------------------
 # console.run(command: str, timeout: float | None = None) -> int
@@ -30,6 +31,10 @@ SVC_SETTINGS_GET = "settings.get"
 SVC_SETTINGS_SET = "settings.set"
 # help.add_entry(title: str, path: Path) -> None
 SVC_HELP_ADD_ENTRY = "help.add_entry"
+# workspace.set_root(path: str, persist: bool = True) -> None
+SVC_WORKSPACE_SET_ROOT = "workspace.set_root"
+# workspace.get_root() -> str
+SVC_WORKSPACE_GET_ROOT = "workspace.get_root"
 
 
 @dataclass(frozen=True)
@@ -41,3 +46,7 @@ class RepoChanged:
 class TabEvent:
     pane_id: str | None
 
+
+@dataclass(frozen=True)
+class WorkspaceChanged:
+    root: str

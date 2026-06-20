@@ -17,6 +17,12 @@ from textual.containers import Horizontal, Vertical
 from textual.worker import Worker, WorkerCancelled
 from textual.widgets import Button, DataTable, Input, Label, RichLog
 
+if __package__:
+    from ..contracts import on_workspace_changed
+else:  # pragma: no cover - script-mode import
+    from contracts import on_workspace_changed
+
+
 class GitHubTab(Vertical):
     """GitHub companion tab powered by the gh CLI."""
 
@@ -77,6 +83,7 @@ class GitHubTab(Vertical):
         self._cancel_requested = False
         self._active_subprocess: asyncio.subprocess.Process | None = None
         self._operation_worker: Worker[None] | None = None
+        self._workspace_disposer = None
 
     def compose(self) -> ComposeResult:
         if __package__:
@@ -109,11 +116,28 @@ class GitHubTab(Vertical):
                         )
 
     def on_mount(self) -> None:
+        bus = getattr(self.app, "bus", None)
+        if bus is not None:
+            self._workspace_disposer = on_workspace_changed(
+                bus,
+                self._on_workspace_changed,
+            )
         self.query_one(DataTable).add_columns("ID", "Title", "Status")
         self._set_controls_enabled(False)
 
     async def on_unmount(self) -> None:
+        if self._workspace_disposer is not None:
+            self._workspace_disposer()
+            self._workspace_disposer = None
         await self.cancel_active_operation()
+
+    def _on_workspace_changed(self, event) -> None:
+        self.repo_path = Path(event.root).resolve()
+        self.repo_slug = None
+        try:
+            self.query_one("#lbl-github-repo-slug", Label).update("")
+        except Exception:
+            pass
 
     async def change_repository(self, repo_path: Path) -> None:
         await self.cancel_active_operation()

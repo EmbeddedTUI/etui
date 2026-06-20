@@ -42,6 +42,7 @@ if __package__:
         SVC_CONSOLE_RUN,
         SVC_NAV_ACTIVATE,
     )
+    from ..contracts import on_workspace_changed
 else:  # pragma: no cover - script-mode import
     from bus import BusMixin
     from bus_contract import (
@@ -49,6 +50,7 @@ else:  # pragma: no cover - script-mode import
         SVC_CONSOLE_RUN,
         SVC_NAV_ACTIVATE,
     )
+    from contracts import on_workspace_changed
 
 
 # Terminal escape sequences that can interleave with shell output (OSC title /
@@ -420,6 +422,7 @@ class ConsoleTab(BusMixin, Vertical):
         self._disposers = [
             self.bus.provide(SVC_CONSOLE_RUN, self._svc_run),
             self.bus.provide(SVC_CONSOLE_FORCE_COMPLETE, self._svc_force_complete),
+            on_workspace_changed(self.bus, self._on_workspace_changed),
         ]
 
     def on_unmount(self) -> None:
@@ -431,6 +434,9 @@ class ConsoleTab(BusMixin, Vertical):
         """Bus service ``console.force_complete``: manually resolve the command
         the terminal is currently waiting on (the Sync override)."""
         self.force_complete(exit_code)
+
+    def _on_workspace_changed(self, event) -> None:
+        self.cwd = Path(event.root)
 
     def force_complete(self, exit_code: int = 0) -> None:
         try:

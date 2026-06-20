@@ -17,6 +17,11 @@ from textual.worker import Worker, WorkerCancelled
 from textual.widgets import Button, Input, Label, RichLog, Tree
 from textual.css.query import NoMatches
 
+if __package__:
+    from ..contracts import on_workspace_changed
+else:  # pragma: no cover - script-mode import
+    from contracts import on_workspace_changed
+
 
 class RepositoryChanged(Message):
     """Event posted when repository context changes."""
@@ -98,6 +103,7 @@ class GitTab(Vertical):
         self._operation_worker: Worker[None] | None = None
         self._selected_change: GitChange | None = None
         self._cancel_requested = False
+        self._workspace_disposer = None
 
     def compose(self) -> ComposeResult:
         if __package__:
@@ -162,10 +168,19 @@ class GitTab(Vertical):
                         )
 
     def on_mount(self) -> None:
+        bus = getattr(self.app, "bus", None)
+        if bus is not None:
+            self._workspace_disposer = on_workspace_changed(
+                bus,
+                self._on_workspace_changed,
+            )
         self._rebuild_tree([], [])
         self._set_controls_enabled(False)
 
     async def on_unmount(self) -> None:
+        if self._workspace_disposer is not None:
+            self._workspace_disposer()
+            self._workspace_disposer = None
         await self.cancel_active_operation()
 
     async def deactivate_tab(self) -> None:
@@ -176,6 +191,11 @@ class GitTab(Vertical):
             self._validate_and_load_repo(path),
             "git-validate-repository",
         )
+
+    def _on_workspace_changed(self, event) -> None:
+        path = Path(event.root)
+        if self.repo_path is None or str(self.repo_path) != str(path.resolve()):
+            self.query_one("#txt-repo-path", Input).value = event.root
 
     def load_repo_status(self) -> Worker[None] | None:
         return self._start_operation(

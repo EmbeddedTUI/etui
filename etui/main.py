@@ -41,9 +41,13 @@ if __package__:
         SVC_NAV_ACTIVATE,
         SVC_SETTINGS_GET,
         SVC_SETTINGS_SET,
+        SVC_WORKSPACE_GET_ROOT,
+        SVC_WORKSPACE_SET_ROOT,
         TOPIC_TAB_ACTIVATED,
         TOPIC_TAB_DEACTIVATED,
+        TOPIC_WORKSPACE_CHANGED,
         TabEvent,
+        WorkspaceChanged,
     )
 else:
     from tabs.help import HelpTab, OpenDocFile
@@ -69,9 +73,13 @@ else:
         SVC_NAV_ACTIVATE,
         SVC_SETTINGS_GET,
         SVC_SETTINGS_SET,
+        SVC_WORKSPACE_GET_ROOT,
+        SVC_WORKSPACE_SET_ROOT,
         TOPIC_TAB_ACTIVATED,
         TOPIC_TAB_DEACTIVATED,
+        TOPIC_WORKSPACE_CHANGED,
         TabEvent,
+        WorkspaceChanged,
     )
 
 class CommandMessage(Message):
@@ -97,6 +105,8 @@ class EtuiApp(App):
         self.bus.provide(SVC_NAV_ACTIVATE, self._svc_activate_tab)
         self.bus.provide(SVC_SETTINGS_GET, self._svc_settings_get)
         self.bus.provide(SVC_SETTINGS_SET, self._svc_settings_set)
+        self.bus.provide(SVC_WORKSPACE_GET_ROOT, self._svc_workspace_get_root)
+        self.bus.provide(SVC_WORKSPACE_SET_ROOT, self._svc_workspace_set_root)
 
         # Discover plugins
         if __package__:
@@ -118,6 +128,14 @@ class EtuiApp(App):
     async def _svc_settings_set(self, section: str, key: str, value: Any) -> None:
         """Bus service: set a settings value."""
         self.settings_manager.set(section, key, value)
+
+    async def _svc_workspace_get_root(self) -> str:
+        """Bus service: get the current workspace root."""
+        return self.workspace_root or str(Path.cwd())
+
+    async def _svc_workspace_set_root(self, path: str, persist: bool = True) -> None:
+        """Bus service: set the host-owned workspace root."""
+        await self.set_workspace_root(path, persist=persist)
 
 
     CSS = """
@@ -182,8 +200,6 @@ class EtuiApp(App):
         self.workspace_root = path
         if persist:
             self.save_workspace_root(path)
-        
-        # 1. Update Files tab
         if update_files:
             try:
                 files_tab = self.query_one(FilesTab)
@@ -191,52 +207,12 @@ class EtuiApp(App):
                 files_tab.query_one("#txt-workspace-root", Input).value = path
             except Exception:
                 pass
-
-        # 2. Update Console tab (cwd)
-        try:
-            console_tab = self.query_one(ConsoleTab)
-            console_tab.cwd = Path(path)
-        except Exception:
-            pass
-
-        # 3. Update Venv tab
-        try:
-            venv_tab = self.query_one(VenvTab)
-            venv_tab.query_one("#venv-project-path", Input).value = path
-            if (Path(path) / "pyproject.toml").is_file():
-                venv_tab.start_project_selection()
-        except Exception:
-            pass
-
-        # 4. Update Git tab
-        try:
-            git_tab = self.query_one(GitTab)
-            if git_tab.repo_path is None or str(git_tab.repo_path) != str(Path(path).resolve()):
-                git_tab.query_one("#txt-repo-path", Input).value = path
-                git_tab.validate_and_load_repo(path)
-        except Exception:
-            pass
-
-        # 5. Update GitHub tab
-        try:
-            github_tab = self.query_one(GitHubTab)
-            self.run_worker(github_tab.change_repository(Path(path)))
-        except Exception:
-            pass
-
-        # 6. Update CMake tab
-        try:
-            cmake_tab = self.query_one(CMakeTab)
-            self.run_worker(cmake_tab.change_repository(Path(path)))
-        except Exception:
-            pass
-
-        # 7. Update Workflow tab
-        try:
-            workflow_tab = self.query_one(WorkflowTab)
-            self.run_worker(workflow_tab.change_repository(Path(path)))
-        except Exception:
-            pass
+        if update_files:
+            self.bus.emit(
+                TOPIC_WORKSPACE_CHANGED,
+                WorkspaceChanged(root=path),
+                source="app",
+            )
 
     async def on_mount(self) -> None:
         await self._mount_plugin_tabs()
@@ -253,7 +229,7 @@ class EtuiApp(App):
         # saved workspace root if it still exists and differs from CWD.
         saved = self.workspace_root
         cwd = str(Path.cwd())
-        await self.set_workspace_root(cwd, update_files=True, persist=False)
+        await self.set_workspace_root(cwd, update_files=False, persist=False)
         if saved and Path(saved).is_dir() and saved != cwd:
             self.notify(
                 f"Previous workspace: {saved}",
@@ -271,6 +247,8 @@ class EtuiApp(App):
                 SVC_SETTINGS_SET,
                 SVC_HELP_ADD_ENTRY,
                 SVC_CONSOLE_RUN,
+                SVC_WORKSPACE_GET_ROOT,
+                SVC_WORKSPACE_SET_ROOT,
             )
             if not self.bus.has(service)
         ]
