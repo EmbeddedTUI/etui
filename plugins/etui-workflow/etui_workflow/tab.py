@@ -29,24 +29,14 @@ from textual.widgets import (
 )
 from textual.worker import Worker, WorkerCancelled
 
-if __package__:
-    from ..workflow.engine import ICONS, StepState, WorkflowEngine
-    from ..workflow.loader import WorkflowMeta, builtin_dir, list_workflows, load
-    from ..workflow.safety import DenylistChecker
-    from ..workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
-    from ..bus import BusMixin, NoProvider, RpcError
-    from ..bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN, WorkspaceChanged
-    from ..contracts import on_workspace_changed, workspace_get_root
-    from ..plugin import CancelOnLeaveMixin
-else:  # pragma: no cover - fallback for non-package execution
-    from workflow.engine import ICONS, StepState, WorkflowEngine
-    from workflow.loader import WorkflowMeta, builtin_dir, list_workflows, load
-    from workflow.safety import DenylistChecker
-    from workflow.schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
-    from bus import BusMixin, NoProvider, RpcError
-    from bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN, WorkspaceChanged
-    from contracts import on_workspace_changed, workspace_get_root
-    from plugin import CancelOnLeaveMixin
+from .engine import ICONS, StepState, WorkflowEngine
+from .loader import WorkflowMeta, builtin_dir, list_workflows, load
+from .safety import DenylistChecker
+from .schema import Workflow, WorkflowStep, WorkflowValidationError, resolve
+
+from etui.plugin import CancelOnLeaveMixin, BusMixin, NoProvider, RpcError
+from etui.bus_contract import SVC_CONSOLE_FORCE_COMPLETE, SVC_CONSOLE_RUN, WorkspaceChanged
+from etui.contracts import on_workspace_changed, workspace_get_root
 
 
 class ConfirmDialog(ModalScreen[bool]):

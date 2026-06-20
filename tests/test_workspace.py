@@ -16,7 +16,6 @@ from etui.tabs.files import FilesTab
 from etui.tabs.console import ConsoleTab
 from etui.tabs.git import GitTab
 from etui.tabs.github import GitHubTab
-from etui.tabs.workflow import WorkflowTab
 
 
 async def _noop_change_repository(self, repo_path: Path) -> None:
@@ -73,9 +72,6 @@ class WorkspaceRootTests(unittest.TestCase):
         stack.enter_context(patch("etui.main.Path.cwd", return_value=self.workspace_root))
         stack.enter_context(
             patch.object(GitHubTab, "change_repository", new=_noop_change_repository)
-        )
-        stack.enter_context(
-            patch.object(WorkflowTab, "change_repository", new=_noop_change_repository)
         )
         return stack
 

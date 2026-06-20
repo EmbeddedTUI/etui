@@ -14,8 +14,8 @@ from .schema import Workflow, WorkflowValidationError, build_workflow
 
 
 def builtin_dir() -> Path:
-    """Directory of workflow YAML files bundled with the etui package."""
-    return Path(__file__).resolve().parent.parent / "workflows"
+    """Directory of workflow YAML files bundled with the etui-workflow package."""
+    return Path(__file__).resolve().parent / "workflows"
 
 
 def load(path: Path) -> Workflow:

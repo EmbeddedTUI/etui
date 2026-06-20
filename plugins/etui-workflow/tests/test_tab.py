@@ -7,11 +7,11 @@ import unittest
 from pathlib import Path
 from textual.app import App, ComposeResult
 
-from etui.tabs.workflow import WorkflowTab
-from etui.workflow.engine import StepState, WorkflowEngine
-from etui.workflow.loader import list_workflows, load
-from etui.workflow.safety import DenylistChecker
-from etui.workflow.schema import WorkflowValidationError, build_workflow, resolve
+from etui_workflow.tab import WorkflowTab
+from etui_workflow.engine import StepState, WorkflowEngine
+from etui_workflow.loader import list_workflows, load
+from etui_workflow.safety import DenylistChecker
+from etui_workflow.schema import WorkflowValidationError, build_workflow, resolve
 
 
 VALID_YAML = textwrap.dedent(
@@ -163,7 +163,7 @@ class TabTests(unittest.TestCase):
             tab.repo_path = Path(d).resolve()
             with tempfile.TemporaryDirectory() as d2:
                 wf = load(_write(d2, "demo.yaml", VALID_YAML))
-            from etui.workflow.schema import WorkflowStep
+            from etui_workflow.schema import WorkflowStep
 
             inside = WorkflowStep(id="a", title="A", cwd="sub")
             self.assertTrue(
@@ -192,7 +192,7 @@ class TabTests(unittest.TestCase):
         self.assertEqual(tab._prepare_sudo("echo hi"), ("echo hi", None))
 
     def test_workflow_dirs_includes_repo_home_and_builtin(self) -> None:
-        from etui.workflow.loader import builtin_dir
+        from etui_workflow.loader import builtin_dir
 
         tab = WorkflowTab()
         tab.repo_path = Path("/tmp/somerepo")
@@ -202,7 +202,7 @@ class TabTests(unittest.TestCase):
         self.assertEqual(dirs[-1], builtin_dir())
 
     def test_builtin_workflows_discoverable(self) -> None:
-        from etui.workflow.loader import builtin_dir, list_workflows
+        from etui_workflow.loader import builtin_dir, list_workflows
 
         names = [m.name for m in list_workflows(builtin_dir())]
         self.assertIn("Zephyr Getting Started", names)
@@ -317,7 +317,7 @@ class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_skip_aborted_step(self) -> None:
         from textual.widgets import Button
-        from etui.workflow.schema import build_workflow
+        from etui_workflow.schema import build_workflow
         app = WorkflowTabTestApp()
         async with app.run_test() as pilot:
             tab = app.query_one(WorkflowTab)
@@ -345,7 +345,7 @@ class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_consecutive_skips_after_abort(self) -> None:
         from textual.widgets import Button
-        from etui.workflow.schema import build_workflow
+        from etui_workflow.schema import build_workflow
         app = WorkflowTabTestApp()
         async with app.run_test() as pilot:
             tab = app.query_one(WorkflowTab)
@@ -405,7 +405,7 @@ class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     except asyncio.CancelledError:
                         raise
                     
-                tabbed_content.active = "workflow"
+                tabbed_content.active = "plugin-workflow"
                 await pilot.pause()
                 
                 # Start detached operation
@@ -432,7 +432,7 @@ class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     except asyncio.CancelledError:
                         raise
                     
-                tabbed_content.active = "workflow"
+                tabbed_content.active = "plugin-workflow"
                 await pilot.pause()
                 
                 # Start normal operation
@@ -451,7 +451,7 @@ class WorkflowTabIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_reload_workflow_empty_and_valid(self) -> None:
         """Clicking reload button when no workflow is selected or when a valid one is selected."""
         from textual.widgets import Select
-        from etui.workflow.loader import builtin_dir, list_workflows
+        from etui_workflow.loader import builtin_dir, list_workflows
 
         app = WorkflowTabTestApp()
         async with app.run_test() as pilot:

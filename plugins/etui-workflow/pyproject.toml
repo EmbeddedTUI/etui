@@ -1,0 +1,20 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "etui-workflow"
+version = "0.1.0"
+description = "YAML-defined Multi-step Command Runner Tab Plugin for etui"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "etui>=0.3.0",
+    "textual>=8.1.1",
+    "pyyaml>=6.0.3",
+]
+
+[project.entry-points."etui.tabs"]
+workflow = "etui_workflow:WorkflowTabPlugin"
+
+[tool.pdm.build]
+includes = ["etui_workflow/"]

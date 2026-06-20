@@ -29,7 +29,6 @@ if __package__:
     from .tabs.git import GitTab, RepositoryChanged
     from .tabs.github import GitHubTab
     from .tabs.settings import SettingsTab
-    from .tabs.workflow import WorkflowTab
     from .settings import SettingsManager
     from .bus import MessageBus
     from .bus_contract import (
@@ -64,7 +63,6 @@ else:
     from tabs.git import GitTab, RepositoryChanged
     from tabs.github import GitHubTab
     from tabs.settings import SettingsTab
-    from tabs.workflow import WorkflowTab
     from settings import SettingsManager
     from bus import MessageBus
     from bus_contract import (
@@ -347,8 +345,6 @@ class EtuiApp(App):
                 yield GitTab()
             with TabPane("GitHub", id="github"):
                 yield GitHubTab()
-            with TabPane("Workflow", id="workflow"):
-                yield WorkflowTab()
             with TabPane("Serial", id="serial"):
                 yield SerialTab()
             with TabPane("Probe", id="probe"):
@@ -462,16 +458,6 @@ class EtuiApp(App):
         elif pane_id == "github":
             try:
                 self.query_one("#btn-mode-issues").focus()
-            except Exception:
-                pass
-        elif pane_id == "cmake":
-            try:
-                self.query_one("#txt-cmake-build").focus()
-            except Exception:
-                pass
-        elif pane_id == "workflow":
-            try:
-                self.query_one("#workflow-select").focus()
             except Exception:
                 pass
         elif pane_id == "plugin-tools":
