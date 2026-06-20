@@ -24,7 +24,7 @@ if __package__:
     from .tabs.files import FilesTab
     from .tabs.probe import ProbeTab, LldbStart
     from .tabs.lldb import LldbTab, ProbeRestartRequested
-    from .tabs.theme import ThemeTab, ThemeChanged
+    from .tabs.theme import ThemeTab
     from .tabs.serial import SerialTab
     from .tabs.venv import VenvTab
     from .tabs.git import GitTab, RepositoryChanged
@@ -41,12 +41,16 @@ if __package__:
         SVC_NAV_ACTIVATE,
         SVC_SETTINGS_GET,
         SVC_SETTINGS_SET,
+        SVC_THEME_GET,
+        SVC_THEME_SET,
         SVC_WORKSPACE_GET_ROOT,
         SVC_WORKSPACE_SET_ROOT,
         TOPIC_TAB_ACTIVATED,
         TOPIC_TAB_DEACTIVATED,
+        TOPIC_THEME_CHANGED,
         TOPIC_WORKSPACE_CHANGED,
         TabEvent,
+        ThemeChanged,
         WorkspaceChanged,
     )
 else:
@@ -56,7 +60,7 @@ else:
     from tabs.files import FilesTab
     from tabs.probe import ProbeTab, LldbStart
     from tabs.lldb import LldbTab, ProbeRestartRequested
-    from tabs.theme import ThemeTab, ThemeChanged
+    from tabs.theme import ThemeTab
     from tabs.serial import SerialTab
     from tabs.venv import VenvTab
     from tabs.git import GitTab, RepositoryChanged
@@ -73,12 +77,16 @@ else:
         SVC_NAV_ACTIVATE,
         SVC_SETTINGS_GET,
         SVC_SETTINGS_SET,
+        SVC_THEME_GET,
+        SVC_THEME_SET,
         SVC_WORKSPACE_GET_ROOT,
         SVC_WORKSPACE_SET_ROOT,
         TOPIC_TAB_ACTIVATED,
         TOPIC_TAB_DEACTIVATED,
+        TOPIC_THEME_CHANGED,
         TOPIC_WORKSPACE_CHANGED,
         TabEvent,
+        ThemeChanged,
         WorkspaceChanged,
     )
 
@@ -107,6 +115,8 @@ class EtuiApp(App):
         self.bus.provide(SVC_SETTINGS_SET, self._svc_settings_set)
         self.bus.provide(SVC_WORKSPACE_GET_ROOT, self._svc_workspace_get_root)
         self.bus.provide(SVC_WORKSPACE_SET_ROOT, self._svc_workspace_set_root)
+        self.bus.provide(SVC_THEME_GET, self._svc_theme_get)
+        self.bus.provide(SVC_THEME_SET, self._svc_theme_set)
 
         # Discover plugins
         if __package__:
@@ -136,6 +146,19 @@ class EtuiApp(App):
     async def _svc_workspace_set_root(self, path: str, persist: bool = True) -> None:
         """Bus service: set the host-owned workspace root."""
         await self.set_workspace_root(path, persist=persist)
+
+    async def _svc_theme_get(self) -> str:
+        """Bus service: get the current LLDB dashboard theme."""
+        return self.settings_manager.get("lldb", "theme", "vibrant")
+
+    async def _svc_theme_set(self, name: str) -> None:
+        """Bus service: set the LLDB dashboard theme and notify tabs."""
+        try:
+            self.settings_manager.set("lldb", "theme", name)
+        except OSError:
+            pass
+        await self.query_one(LldbTab).set_theme(name)
+        self.bus.emit(TOPIC_THEME_CHANGED, ThemeChanged(name=name), source="app")
 
 
     CSS = """
@@ -396,12 +419,6 @@ class EtuiApp(App):
         self.query_one(TabbedContent).active = "files"
         self.query_one(FilesTab).open_file(message.path)
 
-    async def on_theme_changed(self, message: ThemeChanged) -> None:
-        try:
-            self.settings_manager.set("lldb", "theme", message.theme)
-        except OSError:
-            pass
-        await self.query_one(LldbTab).set_theme(message.theme)
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         # Focus the appropriate input/widget when tabs are switched

@@ -23,11 +23,17 @@ from textual.widgets import (
 from ..settings import DEFAULT_SETTINGS
 from .lldb import THEMES
 from .probe import ProbeTab
-from .theme import ThemeChanged
 from .tools import ToolService, ToolsTab
 
+if __package__:
+    from ..bus import BusMixin
+    from ..contracts import theme_set
+else:
+    from bus import BusMixin
+    from contracts import theme_set
 
-class SettingsTab(Horizontal):
+
+class SettingsTab(BusMixin, Horizontal):
     """Centralized configuration for ETUI and its external integrations."""
 
     DEFAULT_CSS = """
@@ -351,7 +357,7 @@ class SettingsTab(Horizontal):
             pass
 
         theme = settings["lldb"]["theme"]
-        self.post_message(ThemeChanged(theme))
+        await theme_set(self.bus, theme)
 
         wrap = bool(settings["ui"]["word_wrap"])
         for log in self.app.query(RichLog):

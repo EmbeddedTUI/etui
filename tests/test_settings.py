@@ -20,6 +20,13 @@ class SettingsTestApp(App):
         super().__init__()
         self.settings_manager = manager
         self.workspace_root: str | None = None
+        from etui.bus import MessageBus
+        from etui.bus_contract import SVC_THEME_SET
+        self.bus = MessageBus()
+        self.bus.provide(SVC_THEME_SET, self._svc_theme_set)
+
+    async def _svc_theme_set(self, name: str) -> None:
+        pass
 
     def compose(self) -> ComposeResult:
         yield ProbeTab()

@@ -5,23 +5,18 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical
-from textual.message import Message
 from textual.widgets import Label
 from textual.widgets import Select
 from textual.widgets import Static
 
 if __package__:
+    from ..bus import BusMixin
+    from ..contracts import theme_set
     from .lldb import THEMES, load_config
 else:
+    from bus import BusMixin
+    from contracts import theme_set
     from lldb import THEMES, load_config
-
-
-class ThemeChanged(Message):
-    """ Posted when the user picks a dashboard color scheme. """
-
-    def __init__(self, theme: str) -> None:
-        super().__init__()
-        self.theme = theme
 
 
 def _preview(theme: dict) -> Text:
@@ -51,7 +46,7 @@ def _preview(theme: dict) -> Text:
     return text
 
 
-class ThemeTab(Vertical):
+class ThemeTab(BusMixin, Vertical):
     """ Top-level tab to choose the LLDB dashboard color scheme. """
 
     DEFAULT_CSS = """
@@ -79,9 +74,9 @@ class ThemeTab(Vertical):
             )
         yield Static(_preview(THEMES[current]), id="theme-preview", markup=False)
 
-    def on_select_changed(self, event: Select.Changed) -> None:
+    async def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id != "theme-select":
             return
         theme = str(event.value)
         self.query_one("#theme-preview", Static).update(_preview(THEMES[theme]))
-        self.post_message(ThemeChanged(theme))
+        await theme_set(self.bus, theme)

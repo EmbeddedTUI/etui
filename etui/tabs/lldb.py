@@ -18,6 +18,12 @@ from textual.widgets import RichLog
 from textual.widgets import Static
 
 
+if __package__:
+    from ..contracts import on_theme_changed, ThemeChanged
+else:
+    from contracts import on_theme_changed, ThemeChanged
+
+
 # Markers used to separate dashboard output (emitted by the lldb stop-hook)
 # from normal interactive console output on the shared stdout stream.
 DASH_BEGIN = "<<<ETUI-DASH-BEGIN>>>"
@@ -323,8 +329,9 @@ class LldbTab(Vertical):
         self._suppress_crash_trace = False
         self._recovery_attempted = False
         self._remote_memory_safe_mode = False
-        self._connect_event: asyncio.Event | None = None
+        self._connect_event = asyncio.Event()
         self._connect_succeeded = False
+        self._theme_disposer = None
 
     def compose(self) -> ComposeResult:
         if __package__:
@@ -359,6 +366,12 @@ class LldbTab(Vertical):
         self.query_one(LldbLog).write(
             "[dim]waiting for probe - start it in the Probe tab[/dim]"
         )
+        bus = getattr(self.app, "bus", None)
+        if bus is not None:
+            self._theme_disposer = on_theme_changed(
+                bus,
+                self._on_theme_changed,
+            )
 
     async def connect(self, port: int, arch: str | None) -> None:
         """ (Re)connect lldb to the gdb server on the given port. """
@@ -381,9 +394,14 @@ class LldbTab(Vertical):
         await self.connect(self._port, self._arch)
 
     async def set_theme(self, name: str) -> None:
+        if getattr(self, "_theme_name", None) == name:
+            return
         self._theme_name = name
         self._theme = THEMES[name]
         await self._rebuild_sections()
+
+    def _on_theme_changed(self, event: ThemeChanged) -> None:
+        self.run_worker(self.set_theme(event.name))
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         command = event.value.strip()
@@ -627,6 +645,9 @@ class LldbTab(Vertical):
         await self._proc.stdin.drain()
 
     def on_unmount(self) -> None:
+        if self._theme_disposer is not None:
+            self._theme_disposer()
+            self._theme_disposer = None
         if self._proc is not None and self._proc.returncode is None:
             self._proc.kill()
 

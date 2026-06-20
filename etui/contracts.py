@@ -17,9 +17,13 @@ if TYPE_CHECKING:
     from .bus import Disposer, Event
 
 from .bus_contract import (
+    SVC_THEME_GET,
+    SVC_THEME_SET,
     SVC_WORKSPACE_GET_ROOT,
     SVC_WORKSPACE_SET_ROOT,
+    TOPIC_THEME_CHANGED,
     TOPIC_WORKSPACE_CHANGED,
+    ThemeChanged,
     WorkspaceChanged,
 )
 
@@ -65,8 +69,38 @@ def on_workspace_changed(
     return bus.subscribe(TOPIC_WORKSPACE_CHANGED, _handle)
 
 
+async def theme_get(bus: ContractBus) -> str:
+    """Return the current host-owned theme."""
+    return str(await bus.call(SVC_THEME_GET))
+
+
+async def theme_set(
+    bus: ContractBus,
+    name: str,
+) -> None:
+    """Ask the host to change the LLDB dashboard theme."""
+    await bus.call(SVC_THEME_SET, name=name)
+
+
+def on_theme_changed(
+    bus: ContractBus,
+    handler: Callable[[ThemeChanged], None],
+) -> "Disposer":
+    """Subscribe to theme changes with a typed payload handler."""
+
+    def _handle(event: "Event") -> None:
+        payload = event.payload
+        if isinstance(payload, ThemeChanged):
+            handler(payload)
+
+    return bus.subscribe(TOPIC_THEME_CHANGED, _handle)
+
+
 __all__ = [
+    "on_theme_changed",
     "on_workspace_changed",
+    "theme_get",
+    "theme_set",
     "workspace_get_root",
     "workspace_set_root",
 ]

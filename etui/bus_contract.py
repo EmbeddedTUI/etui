@@ -16,6 +16,7 @@ TOPIC_REPO_CHANGED = "repo.changed"        # payload: RepoChanged
 TOPIC_TAB_ACTIVATED = "tab.activated"      # payload: TabEvent
 TOPIC_TAB_DEACTIVATED = "tab.deactivated"  # payload: TabEvent
 TOPIC_WORKSPACE_CHANGED = "workspace.changed"  # payload: WorkspaceChanged
+TOPIC_THEME_CHANGED = "theme.changed"          # payload: ThemeChanged
 
 # ---- Services (imperative verbs) -----------------------------------------
 # console.run(command: str, timeout: float | None = None) -> int
@@ -35,6 +36,10 @@ SVC_HELP_ADD_ENTRY = "help.add_entry"
 SVC_WORKSPACE_SET_ROOT = "workspace.set_root"
 # workspace.get_root() -> str
 SVC_WORKSPACE_GET_ROOT = "workspace.get_root"
+# theme.set(name: str) -> None
+SVC_THEME_SET = "theme.set"
+# theme.get() -> str
+SVC_THEME_GET = "theme.get"
 
 
 @dataclass(frozen=True)
@@ -50,3 +55,8 @@ class TabEvent:
 @dataclass(frozen=True)
 class WorkspaceChanged:
     root: str
+
+
+@dataclass(frozen=True)
+class ThemeChanged:
+    name: str
