@@ -33,10 +33,10 @@ dependencies = [
     "pyte>=0.8.2",
 ]
 
-# Optional, independently-released tab plugins. These are local sibling path
-# deps for development only — they are NOT part of the core runtime requirements,
-# so the release/package build (CI) does not need the sibling checkouts present.
-# Install locally with:  pdm install -G plugins   (or `pdm add ./etui_mqtt ...`).
+# First-party tab plugins bundled with a default release, as in-repo path deps.
+# Install with:  pdm install -G default-tabs  (also used by the release build).
+# Third-party plugins (etui-mqtt, etui-email, etui-gh, ...) live in their own
+# repos and are installed separately, not via this project's extras.
 [project.optional-dependencies]
 default-tabs = [
     "etui-tools @ file:///${PROJECT_ROOT}/plugins/etui-tools",
@@ -48,10 +48,6 @@ default-tabs = [
     "etui-git @ file:///${PROJECT_ROOT}/plugins/etui-git",
     "etui-probe @ file:///${PROJECT_ROOT}/plugins/etui-probe",
     "etui-lldb @ file:///${PROJECT_ROOT}/plugins/etui-lldb",
-]
-plugins = [
-    "etui-mqtt @ file:///${PROJECT_ROOT}/../etui_mqtt",
-    "etui-email @ file:///${PROJECT_ROOT}/../etui_email",
 ]
 
 [project.urls]
