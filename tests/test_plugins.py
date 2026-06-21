@@ -235,6 +235,24 @@ class ScopedBusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(received_kwargs["section"], "plugin.good.my_sec")
         self.assertEqual(received_kwargs["key"], "my_key")
 
+    async def test_scoped_bus_plugins_call_stamps_caller(self) -> None:
+        bus = MessageBus()
+        sb = ScopedBus(bus, "plugin-good")
+        received_kwargs = {}
+
+        async def fake_plugins_install(spec, caller="host", upgrade=False):
+            received_kwargs["spec"] = spec
+            received_kwargs["caller"] = caller
+            received_kwargs["upgrade"] = upgrade
+            return {"success": True}
+
+        bus.provide("plugins.install", fake_plugins_install)
+
+        await sb.call("plugins.install", spec="etui-demo", upgrade=True)
+        self.assertEqual(received_kwargs["spec"], "etui-demo")
+        self.assertEqual(received_kwargs["caller"], "plugin-good")
+        self.assertEqual(received_kwargs["upgrade"], True)
+
     def test_scoped_bus_provides_allowlist(self) -> None:
         bus = MessageBus()
         sb = ScopedBus(bus, "plugin-good", provides=("debug.restart_probe",))
@@ -408,6 +426,7 @@ class PluginMountIntegrationTests(unittest.TestCase):
     async def _test_host_services_available_before_plugin_on_mount(self, mock_eps: MagicMock) -> None:
         from etui.main import EtuiApp
         from etui.settings import SettingsManager
+        from textual.widgets import TabbedContent
         import tempfile
 
         HostServiceCheckingWidget.missing_services = []
@@ -622,6 +641,7 @@ class PluginMountIntegrationTests(unittest.TestCase):
     async def _test_plugin_manager_list_and_toggle_and_reorder(self, mock_eps: MagicMock) -> None:
         from etui.main import EtuiApp
         from etui.settings import SettingsManager
+        from textual.widgets import TabbedContent
         import tempfile
 
         mock_eps.return_value = [
@@ -654,15 +674,20 @@ class PluginMountIntegrationTests(unittest.TestCase):
                 disabled = app.settings_manager.get("plugins", "disabled")
                 self.assertIn("plugin-mocktab", disabled)
 
+                with self.assertRaises(Exception):
+                    app.query_one(TabbedContent).get_pane("plugin-mocktab")
+
                 # Set enabled again
                 await app.bus.call("plugins.set_enabled", plugin_id="plugin-mocktab", enabled=True)
                 disabled = app.settings_manager.get("plugins", "disabled")
                 self.assertNotIn("plugin-mocktab", disabled)
+                await app.bus.call("plugins.reload")
+                self.assertIsNotNone(app.query_one(TabbedContent).get_pane("plugin-mocktab"))
 
                 # 3. Test plugins_set_order
                 await app.bus.call("plugins.set_order", order=["plugin-mocktab", "other-plugin"])
                 order = app.settings_manager.get("plugins", "order")
-                self.assertEqual(order, ["plugin-mocktab", "other-plugin"])
+                self.assertEqual(order, ["plugin-mocktab"])
 
     @patch("etui.plugins._entry_points")
     def test_plugin_hot_mount_crash_isolation(self, mock_eps: MagicMock) -> None:
@@ -830,4 +855,3 @@ class GlobalGateTests(unittest.TestCase):
                     for arg in node.args:
                         if isinstance(arg, ast.Name) and arg.id in forbidden_tab_classes:
                             self.fail(f"Global Gate Violation: main.py calls query_one({arg.id})")
-

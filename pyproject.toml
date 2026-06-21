@@ -48,6 +48,7 @@ default-tabs = [
     "etui-git @ file:///${PROJECT_ROOT}/plugins/etui-git",
     "etui-probe @ file:///${PROJECT_ROOT}/plugins/etui-probe",
     "etui-lldb @ file:///${PROJECT_ROOT}/plugins/etui-lldb",
+    "etui-plugin-manager @ file:///${PROJECT_ROOT}/plugins/etui-plugin-manager",
 ]
 
 [project.urls]

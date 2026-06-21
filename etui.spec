@@ -24,6 +24,7 @@ datas += [('etui/doc', 'etui/doc')]
 _FIRST_PARTY_PLUGINS = [
     "etui-tools", "etui-venv", "etui-cmake", "etui-workflow",
     "etui-serial", "etui-github", "etui-git", "etui-probe", "etui-lldb",
+    "etui-plugin-manager",
 ]
 
 # Add README or other static files if they exist

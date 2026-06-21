@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("etui.main")
+CORE_TAB_IDS = {"files", "console", "settings", "theme", "about", "help"}
 
 if __package__:
     from .version import COPYRIGHT  # noqa: F401 — re-exported for callers
@@ -298,16 +299,8 @@ class EtuiApp(App):
         tabs = self.query_one(TabbedContent)
         
         disabled_set = set(self.settings_manager.get("plugins", "disabled", []))
-        order_list = self.settings_manager.get("plugins", "order", [])
-        
-        def sort_key(lp):
-            try:
-                return (order_list.index(lp.spec.id), lp.spec.title)
-            except ValueError:
-                return (len(order_list) + (lp.spec.order or 1000), lp.spec.title)
-                
-        self.plugins.loaded.sort(key=sort_key)
-        
+        self.plugins.loaded = self._ordered_loaded_plugins()
+
         for lp in self.plugins.loaded:
             if lp.spec.id in disabled_set:
                 continue
@@ -532,7 +525,87 @@ class EtuiApp(App):
         self.push_screen(screen)
         return await screen.wait_for_dismiss()
 
-    async def _svc_plugins_list(self) -> list[dict]:
+    def _emit_plugins_changed(
+        self,
+        *,
+        added: list[str] | None = None,
+        removed: list[str] | None = None,
+        enabled: list[str] | None = None,
+        disabled: list[str] | None = None,
+        order: list[str] | None = None,
+    ) -> None:
+        if __package__:
+            from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+        else:
+            from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+
+        self.bus.emit(
+            TOPIC_PLUGINS_CHANGED,
+            PluginsChanged(
+                added=added or [],
+                removed=removed or [],
+                enabled=enabled or [],
+                disabled=disabled or [],
+                order=list(self.settings_manager.get("plugins", "order", []))
+                if order is None
+                else order,
+            ),
+            source="app",
+        )
+
+    def _plugin_by_id(self, plugin_id: str):
+        return next((lp for lp in self.plugins.loaded if lp.spec.id == plugin_id), None)
+
+    def _non_core_plugin_ids(self) -> set[str]:
+        if __package__:
+            from .plugins import PINNED_PLUGIN_IDS
+        else:
+            from plugins import PINNED_PLUGIN_IDS
+        return {
+            lp.spec.id
+            for lp in self.plugins.loaded
+            if lp.spec.id not in PINNED_PLUGIN_IDS
+        }
+
+    def _clean_plugin_order(self, order: list[str]) -> list[str]:
+        known = self._non_core_plugin_ids()
+        clean: list[str] = []
+        for plugin_id in order:
+            if plugin_id in CORE_TAB_IDS or plugin_id not in known or plugin_id in clean:
+                continue
+            clean.append(plugin_id)
+        return clean
+
+    def _ordered_loaded_plugins(self) -> list:
+        order_list = self._clean_plugin_order(self.settings_manager.get("plugins", "order", []))
+        order_index = {plugin_id: idx for idx, plugin_id in enumerate(order_list)}
+
+        def sort_key(lp):
+            return (
+                order_index.get(lp.spec.id, len(order_index)),
+                lp.spec.order or 1000,
+                lp.spec.title,
+            )
+
+        return sorted(self.plugins.loaded, key=sort_key)
+
+    async def _hot_unmount_plugin_tab(self, plugin_id: str, loaded_by_id: dict | None = None) -> bool:
+        tabs = self.query_one(TabbedContent)
+        try:
+            tabs.get_pane(plugin_id)
+        except Exception:
+            return False
+
+        lp = (loaded_by_id or {}).get(plugin_id) or self._plugin_by_id(plugin_id)
+        if lp and lp.scoped_bus:
+            lp.scoped_bus.dispose_all()
+            lp.scoped_bus = None
+
+        await tabs.remove_pane(plugin_id)
+        logger.info("hot-unmounted plugin tab %s", plugin_id)
+        return True
+
+    async def _svc_plugins_list(self, *, caller: str = "host") -> list[dict]:
         try:
             import importlib.metadata as md
             ver = md.version("etui")
@@ -577,6 +650,11 @@ class EtuiApp(App):
                 "status": status,
                 "summary": lp.spec.title,
                 "errors": err,
+                "entry_point": lp.entry_point,
+                "location": lp.location,
+                "settings_section": (
+                    lp.spec.settings_schema.section if lp.spec.settings_schema else None
+                ),
             })
 
         loaded_names = {lp.name for lp in self.plugins.loaded}
@@ -602,12 +680,19 @@ class EtuiApp(App):
                 "status": "error",
                 "summary": f"Load failed: {name}",
                 "errors": msg,
+                "entry_point": "",
+                "location": None,
+                "settings_section": None,
             })
 
         return core_tabs + plugin_dicts
 
-    async def _svc_plugins_install(self, spec: str, *, upgrade: bool = False) -> dict:
-        approved = await self.confirm_action(f"Are you sure you want to install plugin '{spec}'?")
+    async def _svc_plugins_install(
+        self, spec: str, *, upgrade: bool = False, caller: str = "host"
+    ) -> dict:
+        approved = await self.confirm_action(
+            f"Install plugin '{spec}' requested by {caller}?"
+        )
         if not approved:
             raise PermissionError("Installation cancelled by user.")
 
@@ -615,39 +700,10 @@ class EtuiApp(App):
         user_plugin_dir.mkdir(parents=True, exist_ok=True)
 
         if spec == "bootstrap-uv":
-            bin_dir = user_plugin_dir.parent / "bin"
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            local_uv = bin_dir / "uv"
-            
-            import urllib.request
-            import platform
-            import tarfile
-            import tempfile
-            arch = platform.machine()
-            if arch == "x86_64":
-                url = "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-gnu.tar.gz"
-            elif arch in ("aarch64", "arm64"):
-                url = "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-unknown-linux-gnu.tar.gz"
-            else:
-                raise RuntimeError(f"Unsupported architecture for uv bootstrap: {arch}")
-                
-            with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp_file:
-                tmp_path = Path(tmp_file.name)
-                try:
-                    urllib.request.urlretrieve(url, tmp_path)
-                    with tarfile.open(tmp_path, "r:gz") as tar:
-                        for member in tar.getmembers():
-                            if member.name.endswith("/uv"):
-                                f = tar.extractfile(member)
-                                if f:
-                                    local_uv.write_bytes(f.read())
-                                    local_uv.chmod(0o755)
-                                    break
-                finally:
-                    if tmp_path.exists():
-                        tmp_path.unlink()
-            
-            return {"success": True, "installer": str(local_uv)}
+            raise RuntimeError(
+                "uv bootstrap is not configured. Install uv or pip on PATH, "
+                "or configure a checksum-pinned bootstrap release."
+            )
 
         bin_dir = user_plugin_dir.parent / "bin"
         local_uv = bin_dir / "uv"
@@ -697,12 +753,15 @@ class EtuiApp(App):
             shutil.rmtree(tmp_dir)
             raise RuntimeError("No distribution metadata (*.dist-info) found in installation.")
 
-        dist_info = dist_infos[0]
-        meta_name = dist_info.name
-        name_parts = meta_name.replace(".dist-info", "").replace(".egg-info", "").split("-")
-        dist_name = name_parts[0]
+        if __package__:
+            from .plugins import dist_name_from_metadata_dir
+        else:
+            from plugins import dist_name_from_metadata_dir
+        dist_name = dist_name_from_metadata_dir(dist_infos[0])
 
-        target_dir = user_plugin_dir / dist_name
+        target_dir = (user_plugin_dir / dist_name).resolve()
+        if not target_dir.is_relative_to(user_plugin_dir.resolve()):
+            raise ValueError("Plugin install target escapes the managed plugin directory.")
         import shutil
         if target_dir.exists():
             shutil.rmtree(target_dir)
@@ -725,56 +784,53 @@ class EtuiApp(App):
         if path_str not in sys.path:
             sys.path.insert(0, path_str)
 
-        if __package__:
-            from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
-        else:
-            from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
-
-        self.bus.emit(
-            TOPIC_PLUGINS_CHANGED,
-            PluginsChanged(
-                added=[dist_name],
-                removed=[],
-                enabled=[],
-                disabled=[],
-                order=list(self.settings_manager.get("plugins", "order", []))
-            ),
-            source="app"
-        )
+        self._emit_plugins_changed(added=[dist_name])
         return {"dist": dist_name, "success": True}
 
-    async def _svc_plugins_uninstall(self, dist: str) -> None:
-        approved = await self.confirm_action(f"Are you sure you want to uninstall plugin '{dist}'?")
+    async def _svc_plugins_uninstall(self, dist: str, *, caller: str = "host") -> None:
+        if __package__:
+            from .plugins import normalize_dist_name
+        else:
+            from plugins import normalize_dist_name
+        normalized_dist = normalize_dist_name(dist)
+        lp = next(
+            (
+                lp
+                for lp in self.plugins.loaded
+                if normalize_dist_name(lp.dist_name or "") == normalized_dist
+                or normalize_dist_name(lp.name) == normalized_dist
+            ),
+            None,
+        )
+        if lp and lp.source != "third-party":
+            raise PermissionError("Only third-party plugins can be uninstalled.")
+
+        approved = await self.confirm_action(
+            f"Uninstall plugin '{dist}' requested by {caller}?"
+        )
         if not approved:
             raise PermissionError("Uninstall cancelled by user.")
 
         user_plugin_dir = self.get_user_plugin_dir()
-        target_dir = user_plugin_dir / dist
+        target_dir = (user_plugin_dir / normalized_dist).resolve()
+        if not target_dir.is_relative_to(user_plugin_dir.resolve()):
+            raise ValueError("Plugin uninstall target escapes the managed plugin directory.")
         if target_dir.is_dir():
             import shutil
             shutil.rmtree(target_dir)
+            self._emit_plugins_changed(removed=[normalized_dist])
 
-            if __package__:
-                from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
-            else:
-                from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
-
-            self.bus.emit(
-                TOPIC_PLUGINS_CHANGED,
-                PluginsChanged(
-                    added=[],
-                    removed=[dist],
-                    enabled=[],
-                    disabled=[],
-                    order=list(self.settings_manager.get("plugins", "order", []))
-                ),
-                source="app"
-            )
-
-    async def _svc_plugins_set_enabled(self, plugin_id: str, enabled: bool) -> None:
-        core_ids = {"files", "console", "settings", "theme", "about", "help", "plugin-manager"}
-        if plugin_id in core_ids:
-            return
+    async def _svc_plugins_set_enabled(
+        self, plugin_id: str, enabled: bool, *, caller: str = "host"
+    ) -> None:
+        if __package__:
+            from .plugins import PINNED_PLUGIN_IDS
+        else:
+            from plugins import PINNED_PLUGIN_IDS
+        if plugin_id in CORE_TAB_IDS or plugin_id in PINNED_PLUGIN_IDS:
+            raise PermissionError(f"{plugin_id} cannot be disabled.")
+        if self._plugin_by_id(plugin_id) is None:
+            raise ValueError(f"Unknown plugin id: {plugin_id}")
 
         disabled = list(self.settings_manager.get("plugins", "disabled", []))
         if enabled:
@@ -785,48 +841,24 @@ class EtuiApp(App):
                 disabled.append(plugin_id)
 
         self.settings_manager.set("plugins", "disabled", disabled)
+        if not enabled:
+            try:
+                await self._hot_unmount_plugin_tab(plugin_id)
+            except Exception:
+                logger.exception("Failed to hot-unmount disabled plugin %s", plugin_id)
 
-        if __package__:
-            from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
-        else:
-            from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
-
-        self.bus.emit(
-            TOPIC_PLUGINS_CHANGED,
-            PluginsChanged(
-                added=[],
-                removed=[],
-                enabled=[plugin_id] if enabled else [],
-                disabled=[] if enabled else [plugin_id],
-                order=list(self.settings_manager.get("plugins", "order", []))
-            ),
-            source="app"
+        self._emit_plugins_changed(
+            enabled=[plugin_id] if enabled else [],
+            disabled=[] if enabled else [plugin_id],
         )
 
-    async def _svc_plugins_set_order(self, order: list[str]) -> None:
-        core_ids = {"files", "console", "settings", "theme", "about", "help"}
-        clean_order = [pid for pid in order if pid not in core_ids]
+    async def _svc_plugins_set_order(self, order: list[str], *, caller: str = "host") -> None:
+        clean_order = self._clean_plugin_order(order)
 
         self.settings_manager.set("plugins", "order", clean_order)
+        self._emit_plugins_changed(order=clean_order)
 
-        if __package__:
-            from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
-        else:
-            from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
-
-        self.bus.emit(
-            TOPIC_PLUGINS_CHANGED,
-            PluginsChanged(
-                added=[],
-                removed=[],
-                enabled=[],
-                disabled=[],
-                order=clean_order
-            ),
-            source="app"
-        )
-
-    async def _svc_plugins_reload(self) -> dict:
+    async def _svc_plugins_reload(self, *, caller: str = "host") -> dict:
         import sys
         import importlib
         import importlib.metadata
@@ -841,30 +873,19 @@ class EtuiApp(App):
         for pane in list(tabs.children):
             if pane.id and pane.id.startswith("plugin-") and pane.id != "plugin-manager":
                 mounted_ids.add(pane.id)
+        old_loaded_by_id = {lp.spec.id: lp for lp in self.plugins.loaded}
 
         self.plugins.discover()
 
         disabled_set = set(self.settings_manager.get("plugins", "disabled", []))
-        order_list = self.settings_manager.get("plugins", "order", [])
-
-        def sort_key(lp):
-            try:
-                return (order_list.index(lp.spec.id), lp.spec.title)
-            except ValueError:
-                return (len(order_list) + (lp.spec.order or 1000), lp.spec.title)
-
-        self.plugins.loaded.sort(key=sort_key)
+        self.plugins.loaded = self._ordered_loaded_plugins()
 
         # Unmount disabled/uninstalled ones
         current_loaded_ids = {lp.spec.id for lp in self.plugins.loaded if lp.spec.id not in disabled_set}
         for pane_id in mounted_ids:
             if pane_id not in current_loaded_ids:
                 try:
-                    lp = next((lp for lp in self.plugins.loaded if lp.spec.id == pane_id), None)
-                    if lp and lp.scoped_bus:
-                        lp.scoped_bus.dispose_all()
-                    tabs.remove_pane(pane_id)
-                    logger.info("hot-unmounted plugin tab %s", pane_id)
+                    await self._hot_unmount_plugin_tab(pane_id, old_loaded_by_id)
                 except Exception:
                     logger.exception("Failed to hot-unmount plugin %s", pane_id)
 
@@ -919,22 +940,7 @@ class EtuiApp(App):
                 logger.exception("hot-mount crash isolation for plugin %s", lp.spec.id)
                 self.notify(f"Plugin {lp.spec.title} failed to mount: {exc!r}", severity="error")
 
-        if __package__:
-            from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
-        else:
-            from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
-
-        self.bus.emit(
-            TOPIC_PLUGINS_CHANGED,
-            PluginsChanged(
-                added=added,
-                removed=[],
-                enabled=[],
-                disabled=[],
-                order=list(self.settings_manager.get("plugins", "order", []))
-            ),
-            source="app"
-        )
+        self._emit_plugins_changed(added=added)
         return {"added": added}
 
     async def _svc_settings_focus_section(self, section: str) -> None:

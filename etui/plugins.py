@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.metadata as md
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -35,6 +36,7 @@ else:
 
 log = logging.getLogger("etui.plugins")
 ENTRY_GROUP = "etui.tabs"
+PINNED_PLUGIN_IDS = {"plugin-manager"}
 # Host-owned service names a plugin may `provide` (beyond its own
 # `plugin.<id>.*` namespace), declared via TabSpec.provides and validated here.
 ALLOWED_PROVIDES = {
@@ -94,6 +96,8 @@ class ScopedBus:
             kwargs["section"] = f"{bus_id}.{kwargs['section']}"
         if service == "settings.set":
             kwargs["source"] = self._id
+        if service.startswith("plugins."):
+            kwargs.setdefault("caller", self._id)
         return await self._bus.call(service, timeout=timeout, **kwargs)
 
     def dispose_all(self) -> None:
@@ -226,3 +230,17 @@ def _dist_of(ep: md.EntryPoint) -> str | None:
     if dist:
         return f"{dist.name} {dist.version}"
     return None
+
+
+def normalize_dist_name(name: str) -> str:
+    return name.lower().replace("-", "_").replace(".", "_")
+
+
+def dist_name_from_metadata_dir(path: Path) -> str:
+    suffixes = (".dist-info", ".egg-info")
+    name = path.name
+    for suffix in suffixes:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return normalize_dist_name(name.rsplit("-", 1)[0])
