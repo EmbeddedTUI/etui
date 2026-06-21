@@ -11,6 +11,7 @@ from textual.message import Message
 from textual.worker import WorkerState
 
 from etui.plugin import CancelOnLeaveMixin, BusMixin
+from etui.bus_contract import SVC_SERIAL_SEND
 
 
 class SerialTab(CancelOnLeaveMixin, BusMixin, Vertical):
@@ -53,7 +54,7 @@ class SerialTab(CancelOnLeaveMixin, BusMixin, Vertical):
     def on_mount(self) -> None:
         super().on_mount()
         if self.bus is not None:
-            self.bus.provide("serial.send", self._svc_serial_send)
+            self.bus.provide(SVC_SERIAL_SEND, self._svc_serial_send)
         self.refresh_ports()
 
     def on_unmount(self) -> None:

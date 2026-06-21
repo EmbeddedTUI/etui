@@ -47,6 +47,8 @@ SVC_THEME_GET = "theme.get"
 SVC_DEBUG_RESTART_PROBE = "debug.restart_probe"
 # debug.get_gdbserver_status() -> dict | None
 SVC_DEBUG_GET_GDBSERVER_STATUS = "debug.get_gdbserver_status"
+# serial.send(data: str) -> None  (provided by etui-serial; cross-tab command routing)
+SVC_SERIAL_SEND = "serial.send"
 
 
 @dataclass(frozen=True)

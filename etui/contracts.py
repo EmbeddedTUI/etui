@@ -23,6 +23,7 @@ if __package__:
     from .bus_contract import (
         SVC_DEBUG_GET_GDBSERVER_STATUS,
         SVC_DEBUG_RESTART_PROBE,
+        SVC_SERIAL_SEND,
         SVC_THEME_GET,
         SVC_THEME_SET,
         SVC_WORKSPACE_GET_ROOT,
@@ -42,6 +43,7 @@ else:
     from bus_contract import (
         SVC_DEBUG_GET_GDBSERVER_STATUS,
         SVC_DEBUG_RESTART_PROBE,
+        SVC_SERIAL_SEND,
         SVC_THEME_GET,
         SVC_THEME_SET,
         SVC_WORKSPACE_GET_ROOT,
@@ -165,6 +167,11 @@ def on_debug_gdbserver_down(
     return bus.subscribe(TOPIC_DEBUG_GDBSERVER_DOWN, _handle)
 
 
+async def serial_send(bus: ContractBus, data: str) -> None:
+    """Send data over the active serial connection (provided by etui-serial)."""
+    await bus.call(SVC_SERIAL_SEND, data=data)
+
+
 def on_settings_changed(
     bus: ContractBus,
     handler: Callable[[SettingsChanged], None],
@@ -187,6 +194,7 @@ __all__ = [
     "on_settings_changed",
     "on_theme_changed",
     "on_workspace_changed",
+    "serial_send",
     "theme_get",
     "theme_set",
     "workspace_get_root",
