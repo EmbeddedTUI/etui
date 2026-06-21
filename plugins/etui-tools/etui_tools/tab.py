@@ -20,6 +20,7 @@ from textual.worker import Worker, WorkerCancelled
 from textual.widgets import Label, Button, Input, DataTable, RichLog
 
 from etui.plugin import SettingsField, SettingsSchema, ToolWarningBanner, BusMixin, CancelOnLeaveMixin
+from etui.bus_contract import SVC_TOOLS_STATUS
 
 # ==============================================================================
 # Manifest & Data Model
@@ -543,7 +544,7 @@ class ToolsTab(CancelOnLeaveMixin, BusMixin, Vertical):
 
     def on_mount(self) -> None:
         super().on_mount()
-        self._status_provider = self.bus.provide("tools.status", self._svc_tools_status)
+        self._status_provider = self.bus.provide(SVC_TOOLS_STATUS, self._svc_tools_status)
 
         table = self.query_one("#tools-table", DataTable)
         table.add_columns("Tool", "Status", "Version", "Active Path", "Source")

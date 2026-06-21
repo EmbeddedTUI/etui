@@ -49,6 +49,8 @@ SVC_DEBUG_RESTART_PROBE = "debug.restart_probe"
 SVC_DEBUG_GET_GDBSERVER_STATUS = "debug.get_gdbserver_status"
 # serial.send(data: str) -> None  (provided by etui-serial; cross-tab command routing)
 SVC_SERIAL_SEND = "serial.send"
+# tools.status() -> dict  (provided by etui-tools; toolchain availability/versions)
+SVC_TOOLS_STATUS = "tools.status"
 
 
 @dataclass(frozen=True)

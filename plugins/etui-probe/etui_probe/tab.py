@@ -22,6 +22,8 @@ from etui.plugin import SettingsField, SettingsSchema, ToolWarningBanner, BusMix
 from etui.bus_contract import (
     TOPIC_DEBUG_GDBSERVER_READY,
     TOPIC_DEBUG_GDBSERVER_DOWN,
+    SVC_DEBUG_RESTART_PROBE,
+    SVC_DEBUG_GET_GDBSERVER_STATUS,
     GdbserverReady,
     GdbserverDown,
 )
@@ -702,8 +704,8 @@ class ProbeTab(BusMixin, Vertical):
             self.apply_settings(manager.settings.get("probe", {}))
         bus = self.bus
         if bus is not None:
-            bus.provide("debug.get_gdbserver_status", self._svc_get_gdbserver_status)
-            bus.provide("debug.restart_probe", self._svc_restart_probe)
+            bus.provide(SVC_DEBUG_GET_GDBSERVER_STATUS, self._svc_get_gdbserver_status)
+            bus.provide(SVC_DEBUG_RESTART_PROBE, self._svc_restart_probe)
 
     def on_unmount(self) -> None:
         if self._proc is not None and self._proc.returncode is None:

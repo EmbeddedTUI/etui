@@ -17,17 +17,31 @@ if TYPE_CHECKING:
 if __package__:
     from .plugin import API_VERSION
     from .bus import MessageBus, RpcProvider, EventHandler, Disposer
+    from .bus_contract import (
+        SVC_DEBUG_RESTART_PROBE,
+        SVC_DEBUG_GET_GDBSERVER_STATUS,
+        SVC_SERIAL_SEND,
+        SVC_TOOLS_STATUS,
+    )
 else:
     from plugin import API_VERSION
     from bus import MessageBus, RpcProvider, EventHandler, Disposer
+    from bus_contract import (
+        SVC_DEBUG_RESTART_PROBE,
+        SVC_DEBUG_GET_GDBSERVER_STATUS,
+        SVC_SERIAL_SEND,
+        SVC_TOOLS_STATUS,
+    )
 
 log = logging.getLogger("etui.plugins")
 ENTRY_GROUP = "etui.tabs"
+# Host-owned service names a plugin may `provide` (beyond its own
+# `plugin.<id>.*` namespace), declared via TabSpec.provides and validated here.
 ALLOWED_PROVIDES = {
-    "debug.restart_probe",
-    "debug.get_gdbserver_status",
-    "tools.status",
-    "serial.send",
+    SVC_DEBUG_RESTART_PROBE,
+    SVC_DEBUG_GET_GDBSERVER_STATUS,
+    SVC_SERIAL_SEND,
+    SVC_TOOLS_STATUS,
 }
 
 
