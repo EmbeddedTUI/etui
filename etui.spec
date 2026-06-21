@@ -1,7 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 import os
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_submodules,
+    copy_metadata,
+)
 
 block_cipher = None
 
@@ -10,6 +14,17 @@ datas = []
 datas += collect_data_files('textual')
 datas += collect_data_files('pygments')
 datas += [('etui/doc', 'etui/doc')]
+
+# First-party tab plugins are discovered at runtime via the `etui.tabs`
+# entry-point group, which PyInstaller's static analysis cannot follow. Collect
+# each plugin's modules, its package data (guide.md, workflow yaml, CSS, ...) and
+# — critically — its dist-info metadata, so importlib.metadata.entry_points()
+# still finds them inside the frozen binary. Build with the plugins installed
+# (`pdm install -G default-tabs` or `./dev-install.sh`).
+_FIRST_PARTY_PLUGINS = [
+    "etui-tools", "etui-venv", "etui-cmake", "etui-workflow",
+    "etui-serial", "etui-github", "etui-git", "etui-probe", "etui-lldb",
+]
 
 # Add README or other static files if they exist
 if os.path.exists('README.md'):
@@ -26,6 +41,16 @@ hiddenimports += [
     'usb.core',
     'usb.backend.libusb1',
 ]
+
+# Bundle the first-party plugins (modules + data + entry-point metadata).
+for _dist in _FIRST_PARTY_PLUGINS:
+    _mod = _dist.replace("-", "_")
+    try:
+        hiddenimports += collect_submodules(_mod)
+        datas += collect_data_files(_mod)
+        datas += copy_metadata(_dist)
+    except Exception as _exc:  # plugin not installed in this build env
+        print(f"etui.spec: skipping plugin {_dist!r}: {_exc}")
 
 a = Analysis(
     ['etui/main.py'],
