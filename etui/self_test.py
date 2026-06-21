@@ -172,7 +172,7 @@ def test_screenshot_dir_is_inside_doc() -> None:
 # ---------------------------------------------------------------------------
 
 def test_stlink_vids_in_known_usb_probes() -> None:
-    from etui.tabs.probe import KNOWN_USB_PROBES
+    from etui_probe.tab import KNOWN_USB_PROBES
     stlink_pids = {0x3748, 0x374b, 0x374e, 0x374f}
     found = {pid for (vid, pid), _ in KNOWN_USB_PROBES.items() if vid == 0x0483}
     missing = stlink_pids - found
@@ -180,26 +180,26 @@ def test_stlink_vids_in_known_usb_probes() -> None:
 
 
 def test_stlink_usb_probes_use_pyocd_driver() -> None:
-    from etui.tabs.probe import KNOWN_USB_PROBES
+    from etui_probe.tab import KNOWN_USB_PROBES
     for (vid, pid), (desc, driver, _) in KNOWN_USB_PROBES.items():
         if vid == 0x0483:
             assert driver == "pyocd", f"{desc} should use pyocd driver, got {driver!r}"
 
 
 def test_stlink_backend_registered() -> None:
-    from etui.tabs.probe import BACKENDS
+    from etui_probe.tab import BACKENDS
     assert "stlink" in BACKENDS, "stlink missing from BACKENDS"
     assert BACKENDS["stlink"][0] == "st-util", "stlink backend should invoke st-util"
 
 
 def test_stlink_gdb_port_in_default_settings() -> None:
-    from etui.tabs.probe import DEFAULT_SETTINGS, STLINK_GDB_PORT
+    from etui_probe.tab import DEFAULT_SETTINGS, STLINK_GDB_PORT
     assert "stlink_gdb_port" in DEFAULT_SETTINGS, "stlink_gdb_port missing from DEFAULT_SETTINGS"
     assert DEFAULT_SETTINGS["stlink_gdb_port"] == STLINK_GDB_PORT
 
 
 def test_lpc_link2_cmsis_dap_usb_probe_registered() -> None:
-    from etui.tabs.probe import CMSIS_DAP_INTERFACE, KNOWN_USB_PROBES
+    from etui_probe.tab import CMSIS_DAP_INTERFACE, KNOWN_USB_PROBES
     desc, driver, interface = KNOWN_USB_PROBES[(0x1FC9, 0x0090)]
     assert desc == "NXP LPC-LINK2 CMSIS-DAP"
     assert driver == "pyocd"
@@ -207,7 +207,7 @@ def test_lpc_link2_cmsis_dap_usb_probe_registered() -> None:
 
 
 def test_raspberry_pi_debug_probe_registered() -> None:
-    from etui.tabs.probe import CMSIS_DAP_INTERFACE, KNOWN_USB_PROBES
+    from etui_probe.tab import CMSIS_DAP_INTERFACE, KNOWN_USB_PROBES
     desc, driver, interface = KNOWN_USB_PROBES[(0x2E8A, 0x000C)]
     assert desc == "Raspberry Pi Debug Probe"
     assert driver == "pyocd"

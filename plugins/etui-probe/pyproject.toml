@@ -1,0 +1,20 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "etui-probe"
+version = "0.1.0"
+description = "Probe Tab Plugin for etui"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "etui>=0.3.0",
+    "textual>=8.1.1",
+    "pyocd>=0.44.1",
+]
+
+[project.entry-points."etui.tabs"]
+probe = "etui_probe:ProbeTabPlugin"
+
+[tool.pdm.build]
+includes = ["etui_probe/"]

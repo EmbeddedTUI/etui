@@ -10,10 +10,9 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Select
 
-from etui.tabs.probe import (
+from etui_probe.tab import (
     CMSIS_DAP_INTERFACE,
     KNOWN_USB_PROBES,
-    LldbStart,
     ProbeTab,
     TARGET_NONE,
 )
@@ -36,6 +35,9 @@ class FakeProcess:
     def __init__(self, lines: list[str]) -> None:
         self.stdout = FakeStdout(lines)
         self.returncode = None
+
+    def kill(self) -> None:
+        pass
 
     async def wait(self) -> int:
         self.returncode = 0
@@ -307,9 +309,9 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with (
-                patch("etui.tabs.probe.shutil.which", return_value="/bin/pyocd"),
+                patch("etui_probe.tab.shutil.which", return_value="/bin/pyocd"),
                 patch(
-                    "etui.tabs.probe.asyncio.create_subprocess_exec",
+                    "etui_probe.tab.asyncio.create_subprocess_exec",
                     new=AsyncMock(return_value=process),
                 ) as create_process,
             ):
@@ -346,9 +348,9 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             with (
-                patch("etui.tabs.probe.shutil.which", return_value="/bin/pyocd"),
+                patch("etui_probe.tab.shutil.which", return_value="/bin/pyocd"),
                 patch(
-                    "etui.tabs.probe.asyncio.create_subprocess_exec",
+                    "etui_probe.tab.asyncio.create_subprocess_exec",
                     new=AsyncMock(return_value=process2),
                 ) as create_process2,
             ):
@@ -380,7 +382,7 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(["-f", CMSIS_DAP_INTERFACE], _pairs(argv or []))
         self.assertIn(["-c", "adapter serial LPC-LINK2-1"], _pairs(argv or []))
 
-    async def test_pyocd_readiness_posts_lldb_start(self) -> None:
+    async def test_pyocd_readiness_emits_gdbserver_ready(self) -> None:
         app = ProbeTestApp()
         async with app.run_test():
             tab = app.query_one(ProbeTab)
@@ -391,13 +393,13 @@ class ProbeTabTests(unittest.IsolatedAsyncioTestCase):
             tab._settings["gdb_port"] = 3334
             tab._proc = process
 
-            messages: list[object] = []
-            with patch.object(tab, "post_message", side_effect=messages.append):
-                await tab._read_output()
+            events = []
+            tab.bus.subscribe("debug.gdbserver_ready", events.append)
 
-            self.assertEqual(len(messages), 1)
-            self.assertIsInstance(messages[0], LldbStart)
-            self.assertEqual(messages[0].port, 3334)
+            await tab._read_output()
+
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].payload.port, 3334)
             self.assertIsNone(tab._proc)
 
 

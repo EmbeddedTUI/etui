@@ -12,11 +12,73 @@ from textual.widgets import Static
 if __package__:
     from ..bus import BusMixin
     from ..contracts import theme_set
-    from .lldb import THEMES, load_config
 else:
     from bus import BusMixin
     from contracts import theme_set
-    from lldb import THEMES, load_config
+
+
+THEMES = {
+    "vibrant": {
+        "header": "yellow",
+        "dim": "grey50",
+        "reg_name": "bright_cyan",
+        "value": "bright_green",
+        "changed": "bold bright_yellow",
+        "address": "bright_green",
+        "current": "bold black on yellow",
+        "mem_word": "magenta",
+        "frame": "bright_yellow",
+        "thread": "bright_magenta",
+    },
+    "ocean": {
+        "header": "cyan",
+        "dim": "grey46",
+        "reg_name": "cyan",
+        "value": "bright_white",
+        "changed": "bold bright_cyan",
+        "address": "bright_blue",
+        "current": "bold black on cyan",
+        "mem_word": "blue",
+        "frame": "bright_cyan",
+        "thread": "bright_blue",
+    },
+    "solarized": {
+        "header": "#b58900",
+        "dim": "#586e75",
+        "reg_name": "#268bd2",
+        "value": "#93a1a1",
+        "changed": "bold #859900",
+        "address": "#2aa198",
+        "current": "bold #073642 on #b58900",
+        "mem_word": "#6c71c4",
+        "frame": "#cb4b16",
+        "thread": "#d33682",
+    },
+    "subtle": {
+        "header": "yellow",
+        "dim": "grey58",
+        "reg_name": "grey58",
+        "value": "none",
+        "changed": "bold green",
+        "address": "grey58",
+        "current": "bold",
+        "mem_word": "none",
+        "frame": "yellow",
+        "thread": "grey58",
+    },
+    "mono": {
+        "header": "white",
+        "dim": "grey42",
+        "reg_name": "grey70",
+        "value": "none",
+        "changed": "bold white",
+        "address": "grey50",
+        "current": "reverse",
+        "mem_word": "none",
+        "frame": "bold",
+        "thread": "grey50",
+    },
+}
 
 
 def _preview(theme: dict) -> Text:
@@ -61,7 +123,7 @@ class ThemeTab(BusMixin, Vertical):
         self.current_theme = current_theme
 
     def compose(self) -> ComposeResult:
-        current = self.current_theme or load_config()[2]
+        current = self.current_theme or "vibrant"
         if current not in THEMES:
             current = "vibrant"
         with Horizontal(id="theme-bar"):

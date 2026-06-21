@@ -5,7 +5,7 @@
 groups = ["default", "default-tabs", "dev", "plugins"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:499c4f26eada9b04ac513e69dc34e65172d1f8a951d5684722b0c6fbd7e99626"
+content_hash = "sha256:1df367321e3f5dc7a6bb9e526f909fc47d8a4da784bf90fd22dcff19b0d60983"
 
 [[metadata.targets]]
 requires_python = ">=3.13,<3.15"
@@ -183,7 +183,7 @@ files = [
 name = "appdirs"
 version = "1.4.4"
 summary = "A small Python module for determining appropriate platform-specific dirs, e.g. a \"user data dir\"."
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 files = [
     {file = "appdirs-1.4.4-py2.py3-none-any.whl", hash = "sha256:a841dacd6b99318a741b166adb07e19ee71a274450e68237b4650ca1055ab128"},
     {file = "appdirs-1.4.4.tar.gz", hash = "sha256:7d5d0167b2b1ba821647616af46a749d1c653740dd0d2415100fe26e27afdf41"},
@@ -205,7 +205,7 @@ name = "capstone"
 version = "5.0.9"
 requires_python = ">=3.8"
 summary = "Capstone disassembly engine"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 dependencies = [
     "importlib-resources; python_version < \"3.9\"",
 ]
@@ -239,7 +239,7 @@ name = "cffi"
 version = "2.0.0"
 requires_python = ">=3.9"
 summary = "Foreign Function Interface for Python calling C code."
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs", "plugins"]
 dependencies = [
     "pycparser; implementation_name != \"PyPy\"",
 ]
@@ -360,7 +360,7 @@ name = "cmsis-pack-manager"
 version = "0.6.0"
 requires_python = ">=3.6"
 summary = "Python manager for CMSIS-Pack index and cache with fast Rust backend"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 dependencies = [
     "appdirs<2.0,>=1.4",
     "cffi",
@@ -383,7 +383,7 @@ name = "colorama"
 version = "0.4.6"
 requires_python = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,>=2.7"
 summary = "Cross-platform colored terminal text."
-groups = ["default", "default-tabs", "dev", "plugins"]
+groups = ["default-tabs", "dev", "plugins"]
 files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
@@ -509,6 +509,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "etui-lldb"
+version = "0.1.0"
+requires_python = ">=3.13,<3.15"
+path = "./plugins/etui-lldb"
+summary = "LLDB Tab Plugin for etui"
+groups = ["default-tabs"]
+dependencies = [
+    "etui>=0.3.0",
+    "textual>=8.1.1",
+]
+
+[[package]]
 name = "etui-mqtt"
 version = "0.1.0"
 requires_python = ">=3.13,<3.15"
@@ -518,6 +530,19 @@ groups = ["plugins"]
 dependencies = [
     "amqtt @ file:///home/pawel/src/32bitmicroLLC/EmbeddedTUI/etui/../etui_mqtt/../amqtt",
     "etui @ file:///${PROJECT_ROOT}/.",
+    "textual>=8.1.1",
+]
+
+[[package]]
+name = "etui-probe"
+version = "0.1.0"
+requires_python = ">=3.13,<3.15"
+path = "./plugins/etui-probe"
+summary = "Probe Tab Plugin for etui"
+groups = ["default-tabs"]
+dependencies = [
+    "etui>=0.3.0",
+    "pyocd>=0.44.1",
     "textual>=8.1.1",
 ]
 
@@ -677,7 +702,7 @@ files = [
 name = "hidapi"
 version = "0.15.0"
 summary = "A Cython interface to the hidapi from https://github.com/libusb/hidapi"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 marker = "platform_system != \"Linux\""
 files = [
     {file = "hidapi-0.15.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:f336dd2dc308928d54a6fdce137814a941a3633ad6722919d7a3142dd99005c2"},
@@ -761,7 +786,7 @@ name = "importlib-metadata"
 version = "9.0.0"
 requires_python = ">=3.10"
 summary = "Read metadata from Python packages"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 dependencies = [
     "zipp>=3.20",
 ]
@@ -775,7 +800,7 @@ name = "importlib-resources"
 version = "7.1.0"
 requires_python = ">=3.10"
 summary = "Read resources from Python packages"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 dependencies = [
     "zipp>=3.1.0; python_version < \"3.10\"",
 ]
@@ -799,7 +824,7 @@ files = [
 name = "intelhex"
 version = "2.3.0"
 summary = "Python library for Intel HEX files manipulations"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 files = [
     {file = "intelhex-2.3.0-py2.py3-none-any.whl", hash = "sha256:87cc5225657524ec6361354be928adfd56bcf2a3dcc646c40f8f094c39c07db4"},
     {file = "intelhex-2.3.0.tar.gz", hash = "sha256:892b7361a719f4945237da8ccf754e9513db32f5628852785aea108dcd250093"},
@@ -810,7 +835,7 @@ name = "intervaltree"
 version = "3.2.1"
 requires_python = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,>=2.7.18"
 summary = "Editable interval tree data structure for Python 2 and 3"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 dependencies = [
     "sortedcontainers",
 ]
@@ -912,7 +937,7 @@ name = "lark"
 version = "1.3.1"
 requires_python = ">=3.8"
 summary = "a modern parsing library"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 files = [
     {file = "lark-1.3.1-py3-none-any.whl", hash = "sha256:c629b661023a014c37da873b4ff58a817398d12635d3bbb2c5a03be7fe5d1e12"},
     {file = "lark-1.3.1.tar.gz", hash = "sha256:b426a7a6d6d53189d318f2b6236ab5d6429eaf09259f1ca33eb716eed10d2905"},
@@ -923,7 +948,7 @@ name = "libusb-package"
 version = "1.0.26.4"
 requires_python = ">=3.7"
 summary = "Package containing libusb so it can be installed via Python package managers"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 dependencies = [
     "importlib-resources",
 ]
@@ -1236,7 +1261,7 @@ name = "natsort"
 version = "8.4.0"
 requires_python = ">=3.7"
 summary = "Simple yet flexible natural sorting in Python."
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 files = [
     {file = "natsort-8.4.0-py3-none-any.whl", hash = "sha256:4732914fb471f56b5cce04d7bae6f164a592c7712e1c85f9ef585e197299521c"},
     {file = "natsort-8.4.0.tar.gz", hash = "sha256:45312c4a0e5507593da193dedd04abb1469253b601ecaf63445ad80f0a1ea581"},
@@ -1302,7 +1327,7 @@ name = "prettytable"
 version = "3.17.0"
 requires_python = ">=3.10"
 summary = "A simple Python library for easily displaying tabular data in a visually appealing ASCII table format"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 dependencies = [
     "wcwidth",
 ]
@@ -1395,7 +1420,7 @@ name = "psutil"
 version = "7.2.2"
 requires_python = ">=3.6"
 summary = "Cross-platform lib for process and system monitoring."
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs", "plugins"]
 files = [
     {file = "psutil-7.2.2-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:2edccc433cbfa046b980b0df0171cd25bcaeb3a68fe9022db0979e7aa74a826b"},
     {file = "psutil-7.2.2-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:e78c8603dcd9a04c7364f1a3e670cea95d51ee865e4efb3556a3a63adef958ea"},
@@ -1450,7 +1475,7 @@ name = "pycparser"
 version = "3.0"
 requires_python = ">=3.10"
 summary = "C parser in Python"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs", "plugins"]
 marker = "implementation_name != \"PyPy\""
 files = [
     {file = "pycparser-3.0-py3-none-any.whl", hash = "sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992"},
@@ -1462,7 +1487,7 @@ name = "pyelftools"
 version = "0.33"
 requires_python = ">=3.10"
 summary = "Library for analyzing ELF files and DWARF debugging information"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 files = [
     {file = "pyelftools-0.33-py3-none-any.whl", hash = "sha256:f215ad5f47d3f1373a21496a6c9e0707c622840d0622f23ff7ce08678b020036"},
     {file = "pyelftools-0.33.tar.gz", hash = "sha256:660d82dcbeb8e83d1702bd97f223f761625da06111c0cc988eac6b8ab0c1b61f"},
@@ -1559,7 +1584,7 @@ files = [
 name = "pylink-square"
 version = "1.7.0"
 summary = "Python interface for SEGGER J-Link."
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 dependencies = [
     "psutil>=5.2.2",
     "six",
@@ -1574,7 +1599,7 @@ name = "pyocd"
 version = "0.44.1"
 requires_python = ">=3.8.0"
 summary = "Cortex-M debugger for Python"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 dependencies = [
     "capstone<6.0,>=5.0",
     "cmsis-pack-manager<1.0,>=0.5.2",
@@ -1648,7 +1673,7 @@ name = "pyusb"
 version = "1.3.1"
 requires_python = ">=3.9.0"
 summary = "Easy USB access for Python"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 files = [
     {file = "pyusb-1.3.1-py3-none-any.whl", hash = "sha256:bf9b754557af4717fe80c2b07cc2b923a9151f5c08d17bdb5345dac09d6a0430"},
     {file = "pyusb-1.3.1.tar.gz", hash = "sha256:3af070b607467c1c164f49d5b0caabe8ac78dbed9298d703a8dbf9df4052d17e"},
@@ -1779,7 +1804,7 @@ name = "six"
 version = "1.17.0"
 requires_python = "!=3.0.*,!=3.1.*,!=3.2.*,>=2.7"
 summary = "Python 2 and 3 compatibility utilities"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs", "plugins"]
 files = [
     {file = "six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"},
     {file = "six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81"},
@@ -1789,7 +1814,7 @@ files = [
 name = "sortedcontainers"
 version = "2.4.0"
 summary = "Sorted Containers -- Sorted List, Sorted Dict, Sorted Set"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 files = [
     {file = "sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0"},
     {file = "sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88"},
@@ -2031,7 +2056,7 @@ name = "zipp"
 version = "4.1.0"
 requires_python = ">=3.10"
 summary = "Backport of pathlib-compatible object wrapper for zip files"
-groups = ["default", "default-tabs", "plugins"]
+groups = ["default-tabs"]
 files = [
     {file = "zipp-4.1.0-py3-none-any.whl", hash = "sha256:25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f"},
     {file = "zipp-4.1.0.tar.gz", hash = "sha256:4cb57381f544315db7688e976e922a2b18cdb513d21cc194eb42232ba2a3e602"},

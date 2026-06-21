@@ -163,12 +163,7 @@ class SettingsTab(BusMixin, Horizontal):
         seen_sections = {"workspace"}
 
         # Discover built-in tab schemas from known modules
-        builtin_modules = [
-            ("etui.tabs.probe", "ProbeTab"),
-            ("etui.tabs.lldb", "LldbTab"),
-            ("etui.tabs.tools", "ToolsTab"),
-            ("etui_tools.tab", "ToolsTab"),
-        ]
+        builtin_modules = []
         for mod_name, class_name in builtin_modules:
             try:
                 mod = importlib.import_module(mod_name)
@@ -194,6 +189,22 @@ class SettingsTab(BusMixin, Horizontal):
                 if lp.spec.settings_schema and lp.spec.settings_schema.section not in seen_sections:
                     schemas.append(lp.spec.settings_schema)
                     seen_sections.add(lp.spec.settings_schema.section)
+
+        # Fallback to discover all installed entry points (useful for test apps)
+        try:
+            from etui.plugins import _entry_points
+            for ep in _entry_points():
+                try:
+                    cls = ep.load()
+                    plugin = cls()
+                    spec = plugin.spec()
+                    if spec.settings_schema and spec.settings_schema.section not in seen_sections:
+                        schemas.append(spec.settings_schema)
+                        seen_sections.add(spec.settings_schema.section)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         if UI_SCHEMA.section not in seen_sections:
             schemas.append(UI_SCHEMA)

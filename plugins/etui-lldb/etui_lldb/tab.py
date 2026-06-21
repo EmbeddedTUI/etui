@@ -17,13 +17,16 @@ from textual.widgets import Input
 from textual.widgets import RichLog
 from textual.widgets import Static
 
-
-if __package__:
-    from ..contracts import on_theme_changed, theme_get, ThemeChanged
-    from ..plugin import SettingsField, SettingsSchema
-else:
-    from contracts import on_theme_changed, theme_get, ThemeChanged
-    from plugin import SettingsField, SettingsSchema
+from etui.plugin import SettingsField, SettingsSchema, ToolWarningBanner, BusMixin
+from etui.contracts import (
+    on_theme_changed,
+    theme_get,
+    debug_get_gdbserver_status,
+    on_debug_gdbserver_ready,
+    on_debug_gdbserver_down,
+    debug_restart_probe,
+)
+from etui.bus_contract import ThemeChanged
 
 
 # Markers used to separate dashboard output (emitted by the lldb stop-hook)
@@ -183,10 +186,6 @@ class SectionToggle(Message):
         self.collapsed = collapsed
 
 
-class ProbeRestartRequested(Message):
-    """Request a fresh gdb-server process after LLDB aborts."""
-
-
 class DashboardSection(Vertical):
     """ One collapsible, reorderable dashboard section. """
 
@@ -255,7 +254,7 @@ class LldbLog(RichLog):
         self.write("[dim]use [+]/[-] to collapse, up/down to reorder[/dim]")
 
 
-class LldbTab(Vertical):
+class LldbTab(BusMixin, Vertical):
     """ LLDB tab - lldb session attached to a gdb remote, with a dashboard.
 
     Opened automatically once the hardware debugger (OpenOCD) has started
@@ -344,15 +343,14 @@ class LldbTab(Vertical):
         self._suppress_crash_trace = False
         self._recovery_attempted = False
         self._remote_memory_safe_mode = False
-        self._connect_event = asyncio.Event()
+        self._connect_event = None
         self._connect_succeeded = False
+        
         self._theme_disposer = None
+        self._ready_disposer = None
+        self._down_disposer = None
 
     def compose(self) -> ComposeResult:
-        if __package__:
-            from ..plugin import ToolWarningBanner
-        else:
-            from plugin import ToolWarningBanner
         yield ToolWarningBanner("lldb", "LLDB", id="lldb-tool-warning")
         with Horizontal(id="lldb-toolbar"):
             yield Static("Firmware ELF:", id="lldb-executable-label")
@@ -378,10 +376,33 @@ class LldbTab(Vertical):
                         yield Button(label, id=bid)
 
     async def on_mount(self) -> None:
+        nxt = getattr(super(), "on_mount", None)
+        if nxt is not None:
+            nxt()
         self.query_one(LldbLog).write(
             "[dim]waiting for probe - start it in the Probe tab[/dim]"
         )
-        bus = getattr(self.app, "bus", None)
+        
+        # Load settings
+        manager = getattr(self.app, "settings_manager", None)
+        if manager is not None:
+            settings = manager.settings.get("lldb", {})
+            layout = [
+                name for name in settings.get("layout", []) if name in SECTIONS
+            ]
+            self._layout = layout or list(DEFAULT_LAYOUT)
+            self._collapsed = [
+                name for name in settings.get("collapsed", []) if name in SECTIONS
+            ]
+            theme = str(settings.get("theme", DEFAULT_THEME))
+            self._theme_name = theme if theme in THEMES else DEFAULT_THEME
+            executable = str(settings.get("executable", "")).strip()
+            if executable:
+                self._executable = Path(executable).expanduser().resolve()
+            self._theme = THEMES[self._theme_name]
+            await self._rebuild_sections()
+
+        bus = self.bus
         if bus is not None:
             try:
                 theme = await theme_get(bus)
@@ -392,9 +413,33 @@ class LldbTab(Vertical):
                 bus,
                 self._on_theme_changed,
             )
+            self._ready_disposer = on_debug_gdbserver_ready(
+                bus,
+                self._on_gdbserver_ready,
+            )
+            self._down_disposer = on_debug_gdbserver_down(
+                bus,
+                self._on_gdbserver_down,
+            )
+            try:
+                status = await debug_get_gdbserver_status(bus)
+                if status and "port" in status:
+                    await self.connect(status["port"], status.get("arch"))
+            except Exception:
+                pass
+
+    def _on_gdbserver_ready(self, payload) -> None:
+        self.run_worker(self.connect(payload.port, payload.arch))
+        self.run_worker(self.bus.call("nav.activate_tab", tab_id="plugin-lldb"))
+
+    def _on_gdbserver_down(self, payload) -> None:
+        if self._proc is not None and self._proc.returncode is None:
+            self._proc.kill()
+            self._proc = None
+        self.query_one(LldbLog).write("[yellow]gdbserver went down, disconnected[/yellow]")
 
     async def connect(self, port: int, arch: str | None) -> None:
-        """ (Re)connect lldb to the gdb server on the given port. """
+        """ (Re)connect lldb to the gdb remote on the given port. """
         if self._proc is not None and self._proc.returncode is None:
             self._proc.kill()
             self._proc = None
@@ -606,6 +651,20 @@ class LldbTab(Vertical):
             self._connect_event = None
         return self._connect_succeeded
 
+    async def send_command(self, command: str) -> None:
+        log = self.query_one(LldbLog)
+        if self._proc is None or self._proc.returncode is not None:
+            log.write("[red]lldb not running[/red]")
+            return
+        log.write(f"[cyan](lldb) {command}[/cyan]")
+        await self._send_raw(command)
+
+    async def _send_raw(self, command: str) -> None:
+        if self._proc is None or self._proc.stdin is None:
+            return
+        self._proc.stdin.write((command + "\n").encode())
+        await self._proc.stdin.drain()
+
     async def _discard_process(
         self, process: asyncio.subprocess.Process | None
     ) -> None:
@@ -650,26 +709,21 @@ class LldbTab(Vertical):
         for cmd in self._dash_commands():
             await self._send_raw(cmd)
 
-    async def send_command(self, command: str) -> None:
-        log = self.query_one(LldbLog)
-        if self._proc is None or self._proc.returncode is not None:
-            log.write("[red]lldb not running[/red]")
-            return
-        log.write(f"[cyan](lldb) {command}[/cyan]")
-        await self._send_raw(command)
-
-    async def _send_raw(self, command: str) -> None:
-        if self._proc is None or self._proc.stdin is None:
-            return
-        self._proc.stdin.write((command + "\n").encode())
-        await self._proc.stdin.drain()
-
     def on_unmount(self) -> None:
-        if self._theme_disposer is not None:
+        if getattr(self, "_theme_disposer", None) is not None:
             self._theme_disposer()
             self._theme_disposer = None
+        if getattr(self, "_ready_disposer", None) is not None:
+            self._ready_disposer()
+            self._ready_disposer = None
+        if getattr(self, "_down_disposer", None) is not None:
+            self._down_disposer()
+            self._down_disposer = None
         if self._proc is not None and self._proc.returncode is None:
             self._proc.kill()
+        nxt = getattr(super(), "on_unmount", None)
+        if nxt is not None:
+            nxt()
 
     # ---------------------------------------------------------------- output
 
@@ -691,9 +745,9 @@ class LldbTab(Vertical):
             self._handle_exit(proc.returncode)
             if self._memory_map_assertion and not self._recovery_attempted:
                 self._recovery_attempted = True
-                self._request_probe_restart(proc)
+                await self._request_probe_restart(proc)
 
-    def _request_probe_restart(
+    async def _request_probe_restart(
         self, failed_process: asyncio.subprocess.Process
     ) -> None:
         if self._port is None or self._proc is not failed_process:
@@ -703,7 +757,8 @@ class LldbTab(Vertical):
         self.query_one(LldbLog).write(
             "[yellow]restarting the probe server before reconnecting LLDB[/yellow]"
         )
-        self.post_message(ProbeRestartRequested())
+        if self.bus is not None:
+            await debug_restart_probe(self.bus)
 
     def _handle_exit(self, code: int | None) -> None:
         log = self.query_one(LldbLog)

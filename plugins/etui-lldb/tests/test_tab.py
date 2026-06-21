@@ -9,13 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from textual.app import App, ComposeResult
 from textual.widgets import RichLog
 
-from etui.tabs.lldb import (
+from etui_lldb.tab import (
     CONNECT_FAILURE,
     LldbTab,
     MEMORY_MAP_ASSERTION,
-    ProbeRestartRequested,
 )
-from etui.tabs.probe import ProbeTab, TARGETS
+from etui_probe.tab import ProbeTab, TARGETS
 from etui.plugin import ToolWarningBanner
 
 
@@ -121,13 +120,13 @@ class LldbTabTests(unittest.IsolatedAsyncioTestCase):
             tab._port = 4242
             tab._in_dash = True
 
-            posted_messages: list[object] = []
-            with patch.object(
-                tab,
-                "post_message",
-                side_effect=posted_messages.append,
-            ):
-                await tab._read_output()
+            restarts = 0
+            async def dummy_restart():
+                nonlocal restarts
+                restarts += 1
+            tab.bus.provide("debug.restart_probe", dummy_restart)
+
+            await tab._read_output()
 
             self.assertTrue(tab._memory_map_assertion)
             self.assertTrue(tab._suppress_crash_trace)
@@ -137,8 +136,7 @@ class LldbTabTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(process.killed)
             self.assertTrue(tab._recovery_attempted)
             self.assertIsNone(tab._proc)
-            self.assertEqual(len(posted_messages), 1)
-            self.assertIsInstance(posted_messages[0], ProbeRestartRequested)
+            self.assertEqual(restarts, 1)
 
             log_text = "\n".join(
                 line.text for line in tab.query_one(RichLog).lines
@@ -171,13 +169,15 @@ class LldbTabTests(unittest.IsolatedAsyncioTestCase):
             tab._port = 4242
             tab._remote_memory_safe_mode = True
 
-            with patch.object(tab, "post_message") as post_message:
-                tab._request_probe_restart(process)
+            restarts = 0
+            async def dummy_restart():
+                nonlocal restarts
+                restarts += 1
+            tab.bus.provide("debug.restart_probe", dummy_restart)
 
-            post_message.assert_called_once()
-            self.assertIsInstance(
-                post_message.call_args.args[0], ProbeRestartRequested
-            )
+            await tab._request_probe_restart(process)
+
+            self.assertEqual(restarts, 1)
             self.assertIsNone(tab._proc)
             self.assertTrue(tab._remote_memory_safe_mode)
 
@@ -210,9 +210,9 @@ class LldbTabTests(unittest.IsolatedAsyncioTestCase):
                 return MagicMock()
 
             with (
-                patch("etui.tabs.lldb.shutil.which", return_value="/usr/bin/lldb"),
+                patch("etui_lldb.tab.shutil.which", return_value="/usr/bin/lldb"),
                 patch(
-                    "etui.tabs.lldb.asyncio.create_subprocess_exec",
+                    "etui_lldb.tab.asyncio.create_subprocess_exec",
                     new=AsyncMock(return_value=process),
                 ),
                 patch.object(tab, "run_worker", side_effect=close_reader),
@@ -245,7 +245,7 @@ class LldbTabTests(unittest.IsolatedAsyncioTestCase):
             tab._proc = process
 
             with (
-                patch("etui.tabs.probe.asyncio.sleep", new=AsyncMock()),
+                patch("etui_probe.tab.asyncio.sleep", new=AsyncMock()),
                 patch.object(tab, "start", new=AsyncMock()) as start,
             ):
                 await tab.restart_for_lldb()

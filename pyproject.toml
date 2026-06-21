@@ -27,7 +27,6 @@ classifiers = [
 requires-python = ">=3.13,<3.15"
 dependencies = [
     "textual>=8.1.1",
-    "pyocd>=0.44.1",
     "pyserial>=3.5",
     "pygments>=2.17.0",
     "xonsh>=0.18.3",
@@ -49,6 +48,8 @@ default-tabs = [
     "etui-serial @ file:///${PROJECT_ROOT}/plugins/etui-serial",
     "etui-github @ file:///${PROJECT_ROOT}/plugins/etui-github",
     "etui-git @ file:///${PROJECT_ROOT}/plugins/etui-git",
+    "etui-probe @ file:///${PROJECT_ROOT}/plugins/etui-probe",
+    "etui-lldb @ file:///${PROJECT_ROOT}/plugins/etui-lldb",
 ]
 plugins = [
     "etui-mqtt @ file:///${PROJECT_ROOT}/../etui_mqtt",

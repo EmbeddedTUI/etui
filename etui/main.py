@@ -22,8 +22,6 @@ if __package__:
     from .tabs.about import AboutTab
     from .tabs.console import ConsoleTab
     from .tabs.files import FilesTab
-    from .tabs.probe import ProbeTab, LldbStart
-    from .tabs.lldb import LldbTab, ProbeRestartRequested
     from .tabs.theme import ThemeTab
     from .tabs.settings import SettingsTab
     from .settings import SettingsManager
@@ -55,8 +53,6 @@ else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
     from tabs.files import FilesTab
-    from tabs.probe import ProbeTab, LldbStart
-    from tabs.lldb import LldbTab, ProbeRestartRequested
     from tabs.theme import ThemeTab
     from tabs.settings import SettingsTab
     from settings import SettingsManager
@@ -151,7 +147,6 @@ class EtuiApp(App):
             self.settings_manager.set("lldb", "theme", name)
         except OSError:
             pass
-        await self.query_one(LldbTab).set_theme(name)
         self.bus.emit(TOPIC_THEME_CHANGED, ThemeChanged(name=name), source="app")
 
 
@@ -327,10 +322,6 @@ class EtuiApp(App):
                 yield FilesTab()
             with TabPane("Console", id="console"):
                 yield ConsoleTab()
-            with TabPane("Probe", id="probe"):
-                yield ProbeTab()
-            with TabPane("LLDB", id="lldb"):
-                yield LldbTab(settings=self.settings_manager.settings["lldb"])
             with TabPane("Settings", id="settings"):
                 yield SettingsTab()
             with TabPane("Theme", id="theme"):
@@ -359,17 +350,6 @@ class EtuiApp(App):
         #self.notify(f"Posting command messafge {command}")
         self.post_message(CommandMessage(command))
         event.input.value=""
-
-    async def on_lldb_start(self, message: LldbStart) -> None:
-        # The LLDB tab is always present; (re)connect it to the gdb server.
-        lldb = self.query_one(LldbTab)
-        await lldb.connect(message.port, message.arch)
-        self.query_one(TabbedContent).active = "lldb"
-
-    async def on_probe_restart_requested(
-        self, message: ProbeRestartRequested
-    ) -> None:
-        await self.query_one(ProbeTab).restart_for_lldb()
 
     def on_open_doc_file(self, message: OpenDocFile) -> None:
         self.query_one(TabbedContent).active = "files"
@@ -420,12 +400,12 @@ class EtuiApp(App):
                 self.query_one("#main-input").focus()
             except Exception:
                 pass
-        elif pane_id == "probe":
+        elif pane_id == "plugin-probe":
             try:
                 self.query_one("#dbg-input").focus()
             except Exception:
                 pass
-        elif pane_id == "lldb":
+        elif pane_id == "plugin-lldb":
             try:
                 self.query_one("#lldb-input").focus()
             except Exception:

@@ -11,7 +11,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Input, Select
 
 from etui.settings import SettingsManager
-from etui.tabs.probe import ProbeTab
+from etui_probe.tab import ProbeTab
 from etui.tabs.settings import SettingsTab
 
 
