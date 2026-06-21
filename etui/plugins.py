@@ -27,6 +27,7 @@ ALLOWED_PROVIDES = {
     "debug.restart_probe",
     "debug.get_gdbserver_status",
     "tools.status",
+    "serial.send",
 }
 
 
