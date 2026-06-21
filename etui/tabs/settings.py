@@ -23,13 +23,13 @@ from textual.widgets import (
 )
 
 from etui.plugin import SettingsField, SettingsSchema
-from ..settings import DEFAULT_SETTINGS
-
-if __package__:
+if __package__ and "." in __package__:
+    from ..settings import DEFAULT_SETTINGS
     from ..bus import BusMixin
     from ..contracts import theme_set
     from ..bus_contract import SVC_SETTINGS_SET
 else:
+    from settings import DEFAULT_SETTINGS
     from bus import BusMixin
     from contracts import theme_set
     from bus_contract import SVC_SETTINGS_SET

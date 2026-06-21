@@ -9,7 +9,7 @@ from textual.widgets import Label
 from textual.widgets import Select
 from textual.widgets import Static
 
-if __package__:
+if __package__ and "." in __package__:
     from ..bus import BusMixin
     from ..contracts import theme_set
 else:

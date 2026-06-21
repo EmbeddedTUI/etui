@@ -35,7 +35,7 @@ if os.name == "posix":
 
 import pyte
 
-if __package__:
+if __package__ and "." in __package__:
     from ..bus import BusMixin
     from ..bus_contract import (
         SVC_CONSOLE_FORCE_COMPLETE,

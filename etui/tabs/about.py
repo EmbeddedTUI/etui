@@ -10,7 +10,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Center, ScrollableContainer, Vertical
 from textual.widgets import Button, Label, RichLog, Rule, Static, TabbedContent
 
-if __package__:
+if __package__ and "." in __package__:
     from ..version import COPYRIGHT
 else:
     from version import COPYRIGHT
@@ -193,7 +193,7 @@ class AboutTab(Vertical):
         if not path.is_file():
             self.notify(f"File not found: {path.name}", severity="warning")
             return
-        if __package__:
+        if __package__ and "." in __package__:
             from ..tabs.files import FilesTab
         else:
             from tabs.files import FilesTab
@@ -222,7 +222,7 @@ class AboutTab(Vertical):
             status.update(f"Done. {len(saved)} screenshots saved to doc/screenshots/")
 
     async def _run_self_test(self) -> None:
-        if __package__:
+        if __package__ and "." in __package__:
             from ..self_test import run_all
         else:
             from self_test import run_all

@@ -10,7 +10,7 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Label, ListItem, ListView, Static
 
-if __package__:
+if __package__ and "." in __package__:
     from ..bus import BusMixin
     from ..bus_contract import SVC_HELP_ADD_ENTRY
 else:

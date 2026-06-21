@@ -613,3 +613,36 @@ class PluginMountIntegrationTests(unittest.TestCase):
                     help_tab.post_message.assert_not_called()
                 finally:
                     help_tab.post_message = original_post_message
+
+
+class GlobalGateTests(unittest.TestCase):
+    def test_global_gate_no_domain_tab_imports_or_queries_in_main(self) -> None:
+        import ast
+        main_path = Path(__file__).parents[1] / "etui" / "main.py"
+        self.assertTrue(main_path.is_file())
+        
+        with open(main_path, "r", encoding="utf-8") as f:
+            tree = ast.parse(f.read(), filename=str(main_path))
+            
+        # The forbidden domain tab names
+        forbidden_tab_classes = {"ProbeTab", "LldbTab", "GitTab", "GitHubTab", "CMakeTab", "WorkflowTab", "SerialTab", "VenvTab", "ToolsTab"}
+        
+        # Walk AST to find imports or query_one with the forbidden names
+        for node in ast.walk(tree):
+            # Check imports
+            if isinstance(node, ast.ImportFrom):
+                for name in node.names:
+                    if name.name in forbidden_tab_classes:
+                        self.fail(f"Global Gate Violation: main.py imports {name.name} from {node.module}")
+            if isinstance(node, ast.Import):
+                for name in node.names:
+                    if name.name in forbidden_tab_classes:
+                        self.fail(f"Global Gate Violation: main.py imports {name.name}")
+                        
+            # Check query_one(<Class>) calls
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr == "query_one":
+                    for arg in node.args:
+                        if isinstance(arg, ast.Name) and arg.id in forbidden_tab_classes:
+                            self.fail(f"Global Gate Violation: main.py calls query_one({arg.id})")
+

@@ -9,7 +9,10 @@ from typing import Any
 
 logger = logging.getLogger("etui.main")
 
-from .version import COPYRIGHT  # noqa: F401 — re-exported for callers
+if __package__:
+    from .version import COPYRIGHT  # noqa: F401 — re-exported for callers
+else:
+    from version import COPYRIGHT  # noqa: F401 — re-exported for callers
 
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, RichLog

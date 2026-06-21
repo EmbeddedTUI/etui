@@ -14,26 +14,49 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from .bus import Disposer, Event
+    if __package__:
+        from .bus import Disposer, Event
+    else:
+        from bus import Disposer, Event
 
-from .bus_contract import (
-    SVC_DEBUG_GET_GDBSERVER_STATUS,
-    SVC_DEBUG_RESTART_PROBE,
-    SVC_THEME_GET,
-    SVC_THEME_SET,
-    SVC_WORKSPACE_GET_ROOT,
-    SVC_WORKSPACE_SET_ROOT,
-    TOPIC_DEBUG_GDBSERVER_DOWN,
-    TOPIC_DEBUG_GDBSERVER_READY,
-    TOPIC_SETTINGS_CHANGED,
-    TOPIC_THEME_CHANGED,
-    TOPIC_WORKSPACE_CHANGED,
-    GdbserverDown,
-    GdbserverReady,
-    SettingsChanged,
-    ThemeChanged,
-    WorkspaceChanged,
-)
+if __package__:
+    from .bus_contract import (
+        SVC_DEBUG_GET_GDBSERVER_STATUS,
+        SVC_DEBUG_RESTART_PROBE,
+        SVC_THEME_GET,
+        SVC_THEME_SET,
+        SVC_WORKSPACE_GET_ROOT,
+        SVC_WORKSPACE_SET_ROOT,
+        TOPIC_DEBUG_GDBSERVER_DOWN,
+        TOPIC_DEBUG_GDBSERVER_READY,
+        TOPIC_SETTINGS_CHANGED,
+        TOPIC_THEME_CHANGED,
+        TOPIC_WORKSPACE_CHANGED,
+        GdbserverDown,
+        GdbserverReady,
+        SettingsChanged,
+        ThemeChanged,
+        WorkspaceChanged,
+    )
+else:
+    from bus_contract import (
+        SVC_DEBUG_GET_GDBSERVER_STATUS,
+        SVC_DEBUG_RESTART_PROBE,
+        SVC_THEME_GET,
+        SVC_THEME_SET,
+        SVC_WORKSPACE_GET_ROOT,
+        SVC_WORKSPACE_SET_ROOT,
+        TOPIC_DEBUG_GDBSERVER_DOWN,
+        TOPIC_DEBUG_GDBSERVER_READY,
+        TOPIC_SETTINGS_CHANGED,
+        TOPIC_THEME_CHANGED,
+        TOPIC_WORKSPACE_CHANGED,
+        GdbserverDown,
+        GdbserverReady,
+        SettingsChanged,
+        ThemeChanged,
+        WorkspaceChanged,
+    )
 
 
 class ContractBus(Protocol):

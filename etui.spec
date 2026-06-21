@@ -9,6 +9,7 @@ block_cipher = None
 datas = []
 datas += collect_data_files('textual')
 datas += collect_data_files('pygments')
+datas += [('etui/doc', 'etui/doc')]
 
 # Add README or other static files if they exist
 if os.path.exists('README.md'):
