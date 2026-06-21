@@ -10,6 +10,8 @@ from textual.widgets import Button, RichLog, Select, Label
 from textual.message import Message
 from textual.worker import WorkerState
 
+from textual.css.query import NoMatches
+
 from etui.plugin import CancelOnLeaveMixin, BusMixin
 from etui.bus_contract import SVC_SERIAL_SEND
 
@@ -104,14 +106,20 @@ class SerialTab(CancelOnLeaveMixin, BusMixin, Vertical):
                 self.serial_port = None
 
     def disconnect(self) -> None:
+        # Resource cleanup always runs (also during unmount/shutdown).
         if self.serial_port:
             self.serial_port.close()
             self.serial_port = None
-        
-        self.query_one("#serial-connect", Button).label = "Connect"
-        self.query_one("#serial-connect", Button).variant = "primary"
-        self.query_one("#serial-log", RichLog).write("Disconnected")
-        self.workers.cancel_group("serial")
+        self.workers.cancel_group(self, "serial")
+
+        # UI updates only when the widgets still exist (skipped on unmount,
+        # where the child tree has already been torn down).
+        try:
+            self.query_one("#serial-connect", Button).label = "Connect"
+            self.query_one("#serial-connect", Button).variant = "primary"
+            self.query_one("#serial-log", RichLog).write("Disconnected")
+        except NoMatches:
+            pass
 
     def read_serial(self) -> None:
         log = self.query_one("#serial-log", RichLog)
