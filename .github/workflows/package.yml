@@ -47,7 +47,9 @@ jobs:
 
     - name: Install Project Dependencies
       run: |
-        pdm install --frozen-lockfile
+        # --group default-tabs installs the first-party tab plugins so etui.spec
+        # can bundle them; without it the release binary ships core-only.
+        pdm install --frozen-lockfile --group default-tabs
 
     - name: Run PyInstaller
       run: |
