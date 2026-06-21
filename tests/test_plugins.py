@@ -615,6 +615,191 @@ class PluginMountIntegrationTests(unittest.TestCase):
                     help_tab.post_message = original_post_message
 
 
+    @patch("etui.plugins._entry_points")
+    def test_plugin_manager_list_and_toggle_and_reorder(self, mock_eps: MagicMock) -> None:
+        _run_textual_test(self._test_plugin_manager_list_and_toggle_and_reorder(mock_eps))
+
+    async def _test_plugin_manager_list_and_toggle_and_reorder(self, mock_eps: MagicMock) -> None:
+        from etui.main import EtuiApp
+        from etui.settings import SettingsManager
+        import tempfile
+
+        mock_eps.return_value = [
+            MockEntryPoint("mock_plugin", MockAppPlugin),
+        ]
+
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = Path(d) / "settings.yaml"
+            app = EtuiApp()
+            app.settings_manager = SettingsManager(path=settings_path)
+            app.workspace_root = app.load_workspace_root()
+
+            async with app.run_test() as pilot:
+                # 1. Test plugins_list
+                lst = await app.bus.call("plugins.list")
+                # Should contain core tabs and our mock plugin
+                ids = {item["id"] for item in lst}
+                self.assertIn("files", ids)
+                self.assertIn("plugin-mocktab", ids)
+                
+                # Verify metadata fields are populated on mock plugin item
+                mock_item = next(item for item in lst if item["id"] == "plugin-mocktab")
+                self.assertEqual(mock_item["source"], "third-party")
+                self.assertEqual(mock_item["enabled"], True)
+                self.assertEqual(mock_item["status"], "loaded")
+                self.assertEqual(mock_item["summary"], "Mock Tab")
+
+                # 2. Test plugins_set_enabled
+                await app.bus.call("plugins.set_enabled", plugin_id="plugin-mocktab", enabled=False)
+                disabled = app.settings_manager.get("plugins", "disabled")
+                self.assertIn("plugin-mocktab", disabled)
+
+                # Set enabled again
+                await app.bus.call("plugins.set_enabled", plugin_id="plugin-mocktab", enabled=True)
+                disabled = app.settings_manager.get("plugins", "disabled")
+                self.assertNotIn("plugin-mocktab", disabled)
+
+                # 3. Test plugins_set_order
+                await app.bus.call("plugins.set_order", order=["plugin-mocktab", "other-plugin"])
+                order = app.settings_manager.get("plugins", "order")
+                self.assertEqual(order, ["plugin-mocktab", "other-plugin"])
+
+    @patch("etui.plugins._entry_points")
+    def test_plugin_hot_mount_crash_isolation(self, mock_eps: MagicMock) -> None:
+        _run_textual_test(self._test_plugin_hot_mount_crash_isolation(mock_eps))
+
+    async def _test_plugin_hot_mount_crash_isolation(self, mock_eps: MagicMock) -> None:
+        from etui.main import EtuiApp
+        from etui.settings import SettingsManager
+        import tempfile
+
+        # A plugin that crashes during widget creation
+        class CrashingPlugin(EtuiTabPlugin):
+            def spec(self) -> TabSpec:
+                return TabSpec(id="plugin-crash", title="Crash Plugin")
+            def create_widget(self) -> Widget:
+                raise RuntimeError("Boom!")
+
+        mock_eps.return_value = [
+            MockEntryPoint("crash_plugin", CrashingPlugin),
+        ]
+
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = Path(d) / "settings.yaml"
+            app = EtuiApp()
+            app.settings_manager = SettingsManager(path=settings_path)
+            app.workspace_root = app.load_workspace_root()
+
+            async with app.run_test() as pilot:
+                # Run reload
+                res = await app.bus.call("plugins.reload")
+                
+                # The app should keep running despite the crash
+                # The plugin error should be recorded
+                errors = dict(app.plugins.errors)
+                self.assertIn("crash_plugin", errors)
+                self.assertIn("hot-mount failed", errors["crash_plugin"])
+
+                # The plugin status should be "error" in plugins.list and not auto-disabled
+                lst = await app.bus.call("plugins.list")
+                crash_item = next(item for item in lst if item["id"] == "plugin-crash")
+                self.assertEqual(crash_item["status"], "error")
+                self.assertEqual(crash_item["enabled"], True)
+
+    @patch("etui.plugins._entry_points")
+    def test_settings_focus_section(self, mock_eps: MagicMock) -> None:
+        _run_textual_test(self._test_settings_focus_section(mock_eps))
+
+    async def _test_settings_focus_section(self, mock_eps: MagicMock) -> None:
+        from etui.main import EtuiApp
+        from etui.settings import SettingsManager
+        from textual.widgets import TabbedContent
+        import tempfile
+
+        mock_eps.return_value = []
+
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = Path(d) / "settings.yaml"
+            app = EtuiApp()
+            app.settings_manager = SettingsManager(path=settings_path)
+            app.workspace_root = app.load_workspace_root()
+
+            async with app.run_test() as pilot:
+                # 1. Test focus valid core section
+                await app.bus.call("settings.focus_section", section="workspace")
+                tabs = app.query_one(TabbedContent)
+                self.assertEqual(tabs.active, "settings")
+
+                # 2. Test focus invalid/unknown section
+                with patch.object(app, "notify") as mock_notify:
+                    await app.bus.call("settings.focus_section", section="invalid_section")
+                    mock_notify.assert_called_once()
+                    self.assertIn("Unknown or disabled settings section", mock_notify.call_args[0][0])
+
+    @patch("etui.plugins._entry_points")
+    @patch("asyncio.create_subprocess_exec")
+    @patch("shutil.which")
+    def test_plugin_install_uninstall_and_degrade(self, mock_which: MagicMock, mock_exec: MagicMock, mock_eps: MagicMock) -> None:
+        _run_textual_test(self._test_plugin_install_uninstall_and_degrade(mock_which, mock_exec, mock_eps))
+
+    async def _test_plugin_install_uninstall_and_degrade(self, mock_which: MagicMock, mock_exec: MagicMock, mock_eps: MagicMock) -> None:
+        from etui.main import EtuiApp
+        from etui.settings import SettingsManager
+        import tempfile
+
+        mock_eps.return_value = []
+        mock_which.return_value = "/mock/bin/pip"
+
+        # Mock pip process success
+        from unittest.mock import AsyncMock
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"pip output", b""))
+        mock_exec.return_value = mock_proc
+
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = Path(d) / "settings.yaml"
+            app = EtuiApp()
+            app.testing = True  # bypass confirmation dialog
+            app.settings_manager = SettingsManager(path=settings_path)
+            app.settings_manager.set("plugins", "user_plugin_dir", d)
+            app.workspace_root = app.load_workspace_root()
+
+            async with app.run_test() as pilot:
+                # 1. Test degrade when no installer found
+                mock_which.return_value = None
+                with self.assertRaises(RuntimeError):
+                    await app.bus.call("plugins.install", spec="etui-somepkg")
+
+                # 2. Test install argv structure with pip available
+                mock_which.return_value = "/mock/bin/pip"
+                
+                # Simulate dist-info directory creation inside target directory to satisfy metadata check
+                tmp_install_dir = Path(d) / ".tmp_install"
+                def side_effect(*args, **kwargs):
+                    tmp_install_dir.mkdir(parents=True, exist_ok=True)
+                    (tmp_install_dir / "etui_somepkg-0.1.0.dist-info").mkdir(parents=True, exist_ok=True)
+                    return mock_proc
+                mock_exec.side_effect = side_effect
+
+                res = await app.bus.call("plugins.install", spec="etui-somepkg")
+                self.assertTrue(res["success"])
+                self.assertEqual(res["dist"], "etui_somepkg")
+
+                # Assert correct pip call
+                mock_exec.assert_called_with(
+                    "/mock/bin/pip", "install", "--target", str(tmp_install_dir), "etui-somepkg",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+
+                # Verify target folder moved
+                self.assertTrue((Path(d) / "etui_somepkg").is_dir())
+
+                # 3. Test plugins_uninstall
+                await app.bus.call("plugins.uninstall", dist="etui_somepkg")
+                self.assertFalse((Path(d) / "etui_somepkg").exists())
+
+
 class GlobalGateTests(unittest.TestCase):
     def test_global_gate_no_domain_tab_imports_or_queries_in_main(self) -> None:
         import ast

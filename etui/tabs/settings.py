@@ -286,6 +286,67 @@ class SettingsTab(BusMixin, Horizontal):
 
         self.load_settings_into_ui()
 
+    def focus_section(self, section: str) -> bool:
+        self.schemas = self._discover_schemas()
+        schema = next((s for s in self.schemas if s.section == section), None)
+        if not schema:
+            return False
+
+        categories = self.query_one("#settings-categories", ListView)
+        forms = self.query_one("#settings-forms", ContentSwitcher)
+
+        form_id = f"form-{schema.section}"
+        item_id = f"item-{schema.section}"
+
+        try:
+            categories.query_one(f"#{item_id}")
+        except Exception:
+            # Mount dynamically!
+            title = PRETTY_TITLES.get(schema.section, f"{schema.section.title()} Settings")
+            cat_label = title.replace(" Settings", "")
+            categories.mount(ListItem(Label(cat_label), id=item_id))
+
+            form = ScrollableContainer(id=form_id, classes="settings-form")
+            forms.mount(form)
+
+            form.mount(Label(title, classes="setting-label"))
+            for field in schema.fields:
+                widget_id = _field_id(schema.section, field.key)
+                if field.type == "bool":
+                    form.mount(Checkbox(field.label, value=bool(field.default), id=widget_id))
+                else:
+                    group = Vertical(classes="setting-group")
+                    form.mount(group)
+                    group.mount(Label(field.label))
+                    if field.type == "choice":
+                        choices = field.choices or ()
+                        group.mount(Select(
+                            [(str(c).title(), str(c)) for c in choices],
+                            value=str(field.default) if choices else None,
+                            allow_blank=False,
+                            id=widget_id,
+                        ))
+                    elif field.type == "secret":
+                        group.mount(Input(
+                            placeholder=f"e.g. {field.default or ''}",
+                            password=True,
+                            id=widget_id,
+                        ))
+                    else:
+                        group.mount(Input(id=widget_id))
+
+            self.load_settings_into_ui()
+
+        forms.current = form_id
+        try:
+            item = categories.query_one(f"#{item_id}")
+            categories.index = categories.children.index(item)
+            item.focus()
+        except Exception:
+            pass
+
+        return True
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.item and event.item.id:
             section = event.item.id.replace("item-", "")

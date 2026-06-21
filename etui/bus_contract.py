@@ -51,6 +51,23 @@ SVC_DEBUG_GET_GDBSERVER_STATUS = "debug.get_gdbserver_status"
 SVC_SERIAL_SEND = "serial.send"
 # tools.status() -> dict  (provided by etui-tools; toolchain availability/versions)
 SVC_TOOLS_STATUS = "tools.status"
+# plugins.list() -> list[dict]
+SVC_PLUGINS_LIST = "plugins.list"
+# plugins.install(spec: str, *, upgrade: bool = False) -> dict
+SVC_PLUGINS_INSTALL = "plugins.install"
+# plugins.uninstall(dist: str) -> None
+SVC_PLUGINS_UNINSTALL = "plugins.uninstall"
+# plugins.set_enabled(plugin_id: str, enabled: bool) -> None
+SVC_PLUGINS_SET_ENABLED = "plugins.set_enabled"
+# plugins.set_order(order: list[str]) -> None
+SVC_PLUGINS_SET_ORDER = "plugins.set_order"
+# plugins.reload() -> dict
+SVC_PLUGINS_RELOAD = "plugins.reload"
+# settings.focus_section(section: str) -> None
+SVC_SETTINGS_FOCUS_SECTION = "settings.focus_section"
+
+# Event: plugins.changed (TOPIC_PLUGINS_CHANGED)
+TOPIC_PLUGINS_CHANGED = "plugins.changed"
 
 
 @dataclass(frozen=True)
@@ -90,3 +107,12 @@ class SettingsChanged:
     section: str
     key: str
     source: str
+
+
+@dataclass(frozen=True)
+class PluginsChanged:
+    added: list[str]
+    removed: list[str]
+    enabled: list[str]
+    disabled: list[str]
+    order: list[str]

@@ -106,6 +106,20 @@ class ScopedBus:
         self._disposers.clear()
 
 
+FIRST_PARTY_PLUGINS = {
+    "etui-tools",
+    "etui-venv",
+    "etui-cmake",
+    "etui-workflow",
+    "etui-serial",
+    "etui-github",
+    "etui-git",
+    "etui-probe",
+    "etui-lldb",
+    "etui-plugin-manager",
+}
+
+
 @dataclass
 class LoadedPlugin:
     """A successfully imported, loaded, and validated plugin."""
@@ -115,6 +129,11 @@ class LoadedPlugin:
     plugin: EtuiTabPlugin
     spec: TabSpec
     scoped_bus: ScopedBus | None = None
+    dist_name: str | None = None
+    version: str | None = None
+    entry_point: str = ""
+    location: str | None = None
+    source: str = "third-party"
 
 
 @dataclass
@@ -126,6 +145,8 @@ class PluginManager:
 
     def discover(self) -> None:
         """Enumerate entry points and validate; never raises."""
+        self.loaded = []
+        self.errors = []
         for ep in _entry_points():
             try:
                 cls = ep.load()
@@ -153,7 +174,36 @@ class PluginManager:
                     ep.name,
                     f"plugin provides unauthorized service name {service!r}",
                 )
-        self.loaded.append(LoadedPlugin(ep.name, _dist_of(ep), plugin, spec))
+
+        dist = getattr(ep, "dist", None)
+        dist_name = dist.name if dist else None
+        version = dist.version if dist else None
+        location = None
+        if dist:
+            loc = getattr(dist, "locate_file", lambda x: None)("") or getattr(dist, "origin", None) or getattr(dist, "_path", None)
+            if loc:
+                location = str(loc)
+        
+        if dist_name in FIRST_PARTY_PLUGINS:
+            source = "default"
+        else:
+            source = "third-party"
+            
+        entry_point = f"{ep.name} = {ep.value}" if hasattr(ep, "value") else f"{ep.name} = {ep.value if hasattr(ep, 'value') else ''}"
+
+        self.loaded.append(
+            LoadedPlugin(
+                name=ep.name,
+                dist=f"{dist_name} {version}" if dist_name else None,
+                plugin=plugin,
+                spec=spec,
+                dist_name=dist_name,
+                version=version,
+                entry_point=entry_point,
+                location=location,
+                source=source,
+            )
+        )
 
     def _fail(self, name: str, message: str) -> None:
         log.warning("plugin %s: %s", name, message)

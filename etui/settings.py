@@ -41,6 +41,11 @@ DEFAULT_SETTINGS = {
         "theme": "dark",
         "word_wrap": False,
     },
+    "plugins": {
+        "disabled": [],
+        "order": [],
+        "user_plugin_dir": "",
+    },
 }
 
 
@@ -75,10 +80,16 @@ class SettingsManager:
         destination: dict[str, Any], source: dict[str, Any]
     ) -> None:
         for category, values in source.items():
-            if category not in destination or not isinstance(values, dict):
+            if category not in destination:
+                if category.startswith("plugin.") and isinstance(values, dict):
+                    destination[category] = deepcopy(values)
+                continue
+            if not isinstance(values, dict):
                 continue
             for key, value in values.items():
                 if key in destination[category]:
+                    destination[category][key] = value
+                elif category.startswith("plugin."):
                     destination[category][key] = value
 
     def migrate_legacy_configs(self, settings: dict[str, Any]) -> None:

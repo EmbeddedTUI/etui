@@ -38,6 +38,15 @@ if __package__:
         SettingsChanged,
         ThemeChanged,
         WorkspaceChanged,
+        SVC_PLUGINS_LIST,
+        SVC_PLUGINS_INSTALL,
+        SVC_PLUGINS_UNINSTALL,
+        SVC_PLUGINS_SET_ENABLED,
+        SVC_PLUGINS_SET_ORDER,
+        SVC_PLUGINS_RELOAD,
+        SVC_SETTINGS_FOCUS_SECTION,
+        TOPIC_PLUGINS_CHANGED,
+        PluginsChanged,
     )
 else:
     from bus_contract import (
@@ -58,6 +67,15 @@ else:
         SettingsChanged,
         ThemeChanged,
         WorkspaceChanged,
+        SVC_PLUGINS_LIST,
+        SVC_PLUGINS_INSTALL,
+        SVC_PLUGINS_UNINSTALL,
+        SVC_PLUGINS_SET_ENABLED,
+        SVC_PLUGINS_SET_ORDER,
+        SVC_PLUGINS_RELOAD,
+        SVC_SETTINGS_FOCUS_SECTION,
+        TOPIC_PLUGINS_CHANGED,
+        PluginsChanged,
     )
 
 
@@ -186,6 +204,46 @@ def on_settings_changed(
     return bus.subscribe(TOPIC_SETTINGS_CHANGED, _handle)
 
 
+async def plugins_list(bus: ContractBus) -> list[dict]:
+    return await bus.call(SVC_PLUGINS_LIST)  # type: ignore[return-value]
+
+
+async def plugins_install(bus: ContractBus, spec: str, *, upgrade: bool = False) -> dict:
+    return await bus.call(SVC_PLUGINS_INSTALL, spec=spec, upgrade=upgrade)  # type: ignore[return-value]
+
+
+async def plugins_uninstall(bus: ContractBus, dist: str) -> None:
+    await bus.call(SVC_PLUGINS_UNINSTALL, dist=dist)
+
+
+async def plugins_set_enabled(bus: ContractBus, plugin_id: str, enabled: bool) -> None:
+    await bus.call(SVC_PLUGINS_SET_ENABLED, plugin_id=plugin_id, enabled=enabled)
+
+
+async def plugins_set_order(bus: ContractBus, order: list[str]) -> None:
+    await bus.call(SVC_PLUGINS_SET_ORDER, order=order)
+
+
+async def plugins_reload(bus: ContractBus) -> dict:
+    return await bus.call(SVC_PLUGINS_RELOAD)  # type: ignore[return-value]
+
+
+async def settings_focus_section(bus: ContractBus, section: str) -> None:
+    await bus.call(SVC_SETTINGS_FOCUS_SECTION, section=section)
+
+
+def on_plugins_changed(
+    bus: ContractBus,
+    handler: Callable[[PluginsChanged], None],
+) -> "Disposer":
+    def _handle(event: "Event") -> None:
+        payload = event.payload
+        if isinstance(payload, PluginsChanged):
+            handler(payload)
+
+    return bus.subscribe(TOPIC_PLUGINS_CHANGED, _handle)
+
+
 __all__ = [
     "debug_get_gdbserver_status",
     "debug_restart_probe",
@@ -199,4 +257,12 @@ __all__ = [
     "theme_set",
     "workspace_get_root",
     "workspace_set_root",
+    "plugins_list",
+    "plugins_install",
+    "plugins_uninstall",
+    "plugins_set_enabled",
+    "plugins_set_order",
+    "plugins_reload",
+    "settings_focus_section",
+    "on_plugins_changed",
 ]

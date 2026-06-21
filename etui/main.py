@@ -19,6 +19,7 @@ from textual.widgets import Footer, Header, RichLog
 from textual.widgets import Input
 from textual.widgets import TabbedContent, TabPane
 from textual.message import Message
+from textual.screen import ModalScreen
 
 if __package__:
     from .tabs.help import HelpTab, OpenDocFile
@@ -50,6 +51,13 @@ if __package__:
         TabEvent,
         ThemeChanged,
         WorkspaceChanged,
+        SVC_PLUGINS_LIST,
+        SVC_PLUGINS_INSTALL,
+        SVC_PLUGINS_UNINSTALL,
+        SVC_PLUGINS_SET_ENABLED,
+        SVC_PLUGINS_SET_ORDER,
+        SVC_PLUGINS_RELOAD,
+        SVC_SETTINGS_FOCUS_SECTION,
     )
 else:
     from tabs.help import HelpTab, OpenDocFile
@@ -81,6 +89,13 @@ else:
         TabEvent,
         ThemeChanged,
         WorkspaceChanged,
+        SVC_PLUGINS_LIST,
+        SVC_PLUGINS_INSTALL,
+        SVC_PLUGINS_UNINSTALL,
+        SVC_PLUGINS_SET_ENABLED,
+        SVC_PLUGINS_SET_ORDER,
+        SVC_PLUGINS_RELOAD,
+        SVC_SETTINGS_FOCUS_SECTION,
     )
 
 class CommandMessage(Message):
@@ -105,6 +120,18 @@ class EtuiApp(App):
         self.bus.provide(SVC_WORKSPACE_SET_ROOT, self._svc_workspace_set_root)
         self.bus.provide(SVC_THEME_GET, self._svc_theme_get)
         self.bus.provide(SVC_THEME_SET, self._svc_theme_set)
+
+        # Register new plugin manager services
+        self.bus.provide(SVC_PLUGINS_LIST, self._svc_plugins_list)
+        self.bus.provide(SVC_PLUGINS_INSTALL, self._svc_plugins_install)
+        self.bus.provide(SVC_PLUGINS_UNINSTALL, self._svc_plugins_uninstall)
+        self.bus.provide(SVC_PLUGINS_SET_ENABLED, self._svc_plugins_set_enabled)
+        self.bus.provide(SVC_PLUGINS_SET_ORDER, self._svc_plugins_set_order)
+        self.bus.provide(SVC_PLUGINS_RELOAD, self._svc_plugins_reload)
+        self.bus.provide(SVC_SETTINGS_FOCUS_SECTION, self._svc_settings_focus_section)
+
+        # Load user plugins target directories to sys.path
+        self.load_user_plugins_sys_path()
 
         # Discover plugins
         if __package__:
@@ -269,7 +296,21 @@ class EtuiApp(App):
 
         # Mount plugin tabs
         tabs = self.query_one(TabbedContent)
+        
+        disabled_set = set(self.settings_manager.get("plugins", "disabled", []))
+        order_list = self.settings_manager.get("plugins", "order", [])
+        
+        def sort_key(lp):
+            try:
+                return (order_list.index(lp.spec.id), lp.spec.title)
+            except ValueError:
+                return (len(order_list) + (lp.spec.order or 1000), lp.spec.title)
+                
+        self.plugins.loaded.sort(key=sort_key)
+        
         for lp in self.plugins.loaded:
+            if lp.spec.id in disabled_set:
+                continue
             try:
                 widget = lp.plugin.create_widget()
 
@@ -300,6 +341,8 @@ class EtuiApp(App):
 
                 logger.info("mounted plugin tab %s (%s)", lp.spec.id, lp.dist)
             except Exception as exc:
+                if lp.scoped_bus:
+                    lp.scoped_bus.dispose_all()
                 self.plugins.errors.append((lp.name, f"mount failed: {exc!r}"))
                 logger.exception("failed to mount plugin %s", lp.spec.id)
 
@@ -459,6 +502,499 @@ class EtuiApp(App):
         saved = self.settings_manager.get("workspace", "root")
         if saved and Path(saved).is_dir():
             await self.set_workspace_root(saved, update_files=True)
+
+    def get_user_plugin_dir(self) -> Path:
+        path_str = self.settings_manager.get("plugins", "user_plugin_dir")
+        if path_str:
+            return Path(path_str).expanduser().resolve()
+        import os
+        xdg_data = os.environ.get("XDG_DATA_HOME")
+        if xdg_data:
+            base = Path(xdg_data)
+        else:
+            base = Path.home() / ".local" / "share"
+        return base / "etui" / "plugins"
+
+    def load_user_plugins_sys_path(self) -> None:
+        user_plugin_dir = self.get_user_plugin_dir()
+        if user_plugin_dir.is_dir():
+            import sys
+            for path in user_plugin_dir.iterdir():
+                if path.is_dir() and not path.name.startswith("."):
+                    path_str = str(path)
+                    if path_str not in sys.path:
+                        sys.path.insert(0, path_str)
+
+    async def confirm_action(self, message: str) -> bool:
+        if getattr(self, "testing", False) or os.environ.get("ETUI_TEST") == "1":
+            return True
+        screen = ConfirmModal(message)
+        self.push_screen(screen)
+        return await screen.wait_for_dismiss()
+
+    async def _svc_plugins_list(self) -> list[dict]:
+        try:
+            import importlib.metadata as md
+            ver = md.version("etui")
+        except Exception:
+            ver = "0.4.0"
+
+        core_tabs = [
+            {"id": "files", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "Workspace file explorer and editor", "errors": None},
+            {"id": "console", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "Interactive command terminal", "errors": None},
+            {"id": "settings", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "Application configuration", "errors": None},
+            {"id": "theme", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "UI theme selector", "errors": None},
+            {"id": "about", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "About EmbeddedTUI", "errors": None},
+            {"id": "help", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "Help and documentation browser", "errors": None},
+        ]
+
+        disabled_set = set(self.settings_manager.get("plugins", "disabled", []))
+        error_map = {name: msg for name, msg in self.plugins.errors}
+
+        plugin_dicts = []
+        for lp in self.plugins.loaded:
+            is_enabled = lp.spec.id not in disabled_set
+            
+            if lp.spec.id in error_map:
+                status = "error"
+                err = error_map[lp.spec.id]
+            elif lp.name in error_map:
+                status = "error"
+                err = error_map[lp.name]
+            elif not is_enabled:
+                status = "disabled"
+                err = None
+            else:
+                status = "loaded"
+                err = None
+
+            plugin_dicts.append({
+                "id": lp.spec.id,
+                "dist": lp.dist_name or lp.name,
+                "version": lp.version,
+                "source": lp.source,
+                "enabled": is_enabled,
+                "status": status,
+                "summary": lp.spec.title,
+                "errors": err,
+            })
+
+        loaded_names = {lp.name for lp in self.plugins.loaded}
+        loaded_ids = {lp.spec.id for lp in self.plugins.loaded}
+        for name, msg in self.plugins.errors:
+            if name in loaded_names or name in loaded_ids or name == "host-services":
+                continue
+            is_enabled = f"plugin-{name}" not in disabled_set
+            
+            if __package__:
+                from .plugins import FIRST_PARTY_PLUGINS
+            else:
+                from plugins import FIRST_PARTY_PLUGINS
+                
+            source = "default" if f"etui-{name}" in FIRST_PARTY_PLUGINS or name in FIRST_PARTY_PLUGINS else "third-party"
+            
+            plugin_dicts.append({
+                "id": f"plugin-{name}",
+                "dist": name,
+                "version": None,
+                "source": source,
+                "enabled": is_enabled,
+                "status": "error",
+                "summary": f"Load failed: {name}",
+                "errors": msg,
+            })
+
+        return core_tabs + plugin_dicts
+
+    async def _svc_plugins_install(self, spec: str, *, upgrade: bool = False) -> dict:
+        approved = await self.confirm_action(f"Are you sure you want to install plugin '{spec}'?")
+        if not approved:
+            raise PermissionError("Installation cancelled by user.")
+
+        user_plugin_dir = self.get_user_plugin_dir()
+        user_plugin_dir.mkdir(parents=True, exist_ok=True)
+
+        if spec == "bootstrap-uv":
+            bin_dir = user_plugin_dir.parent / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            local_uv = bin_dir / "uv"
+            
+            import urllib.request
+            import platform
+            import tarfile
+            import tempfile
+            arch = platform.machine()
+            if arch == "x86_64":
+                url = "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-gnu.tar.gz"
+            elif arch in ("aarch64", "arm64"):
+                url = "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-unknown-linux-gnu.tar.gz"
+            else:
+                raise RuntimeError(f"Unsupported architecture for uv bootstrap: {arch}")
+                
+            with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                try:
+                    urllib.request.urlretrieve(url, tmp_path)
+                    with tarfile.open(tmp_path, "r:gz") as tar:
+                        for member in tar.getmembers():
+                            if member.name.endswith("/uv"):
+                                f = tar.extractfile(member)
+                                if f:
+                                    local_uv.write_bytes(f.read())
+                                    local_uv.chmod(0o755)
+                                    break
+                finally:
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+            
+            return {"success": True, "installer": str(local_uv)}
+
+        bin_dir = user_plugin_dir.parent / "bin"
+        local_uv = bin_dir / "uv"
+        installer = None
+        if local_uv.is_file() and os.access(local_uv, os.X_OK):
+            installer = str(local_uv)
+        else:
+            import shutil
+            installer = shutil.which("uv") or shutil.which("pip") or shutil.which("pip3")
+
+        if not installer:
+            raise RuntimeError("No package installer (uv or pip) found on PATH.")
+
+        tmp_dir = user_plugin_dir / ".tmp_install"
+        if tmp_dir.exists():
+            import shutil
+            shutil.rmtree(tmp_dir)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+
+        cmd = []
+        if "uv" in installer:
+            cmd = [installer, "pip", "install", "--target", str(tmp_dir), spec]
+        else:
+            cmd = [installer, "install", "--target", str(tmp_dir), spec]
+        if upgrade:
+            cmd.append("--upgrade")
+
+        import asyncio
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            err_msg = stderr.decode(errors="replace")
+            import shutil
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir)
+            raise RuntimeError(f"Installation failed: {err_msg}")
+
+        dist_infos = list(tmp_dir.glob("*.dist-info"))
+        if not dist_infos:
+            dist_infos = list(tmp_dir.glob("*.egg-info"))
+        if not dist_infos:
+            import shutil
+            shutil.rmtree(tmp_dir)
+            raise RuntimeError("No distribution metadata (*.dist-info) found in installation.")
+
+        dist_info = dist_infos[0]
+        meta_name = dist_info.name
+        name_parts = meta_name.replace(".dist-info", "").replace(".egg-info", "").split("-")
+        dist_name = name_parts[0]
+
+        target_dir = user_plugin_dir / dist_name
+        import shutil
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for path in tmp_dir.iterdir():
+            shutil.move(str(path), str(target_dir / path.name))
+
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+
+        import sys
+        import importlib
+        import importlib.metadata
+        if hasattr(importlib.metadata, "invalidate_caches"):
+            importlib.metadata.invalidate_caches()
+        importlib.invalidate_caches()
+
+        path_str = str(target_dir)
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
+
+        if __package__:
+            from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+        else:
+            from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+
+        self.bus.emit(
+            TOPIC_PLUGINS_CHANGED,
+            PluginsChanged(
+                added=[dist_name],
+                removed=[],
+                enabled=[],
+                disabled=[],
+                order=list(self.settings_manager.get("plugins", "order", []))
+            ),
+            source="app"
+        )
+        return {"dist": dist_name, "success": True}
+
+    async def _svc_plugins_uninstall(self, dist: str) -> None:
+        approved = await self.confirm_action(f"Are you sure you want to uninstall plugin '{dist}'?")
+        if not approved:
+            raise PermissionError("Uninstall cancelled by user.")
+
+        user_plugin_dir = self.get_user_plugin_dir()
+        target_dir = user_plugin_dir / dist
+        if target_dir.is_dir():
+            import shutil
+            shutil.rmtree(target_dir)
+
+            if __package__:
+                from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+            else:
+                from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+
+            self.bus.emit(
+                TOPIC_PLUGINS_CHANGED,
+                PluginsChanged(
+                    added=[],
+                    removed=[dist],
+                    enabled=[],
+                    disabled=[],
+                    order=list(self.settings_manager.get("plugins", "order", []))
+                ),
+                source="app"
+            )
+
+    async def _svc_plugins_set_enabled(self, plugin_id: str, enabled: bool) -> None:
+        core_ids = {"files", "console", "settings", "theme", "about", "help", "plugin-manager"}
+        if plugin_id in core_ids:
+            return
+
+        disabled = list(self.settings_manager.get("plugins", "disabled", []))
+        if enabled:
+            if plugin_id in disabled:
+                disabled.remove(plugin_id)
+        else:
+            if plugin_id not in disabled:
+                disabled.append(plugin_id)
+
+        self.settings_manager.set("plugins", "disabled", disabled)
+
+        if __package__:
+            from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+        else:
+            from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+
+        self.bus.emit(
+            TOPIC_PLUGINS_CHANGED,
+            PluginsChanged(
+                added=[],
+                removed=[],
+                enabled=[plugin_id] if enabled else [],
+                disabled=[] if enabled else [plugin_id],
+                order=list(self.settings_manager.get("plugins", "order", []))
+            ),
+            source="app"
+        )
+
+    async def _svc_plugins_set_order(self, order: list[str]) -> None:
+        core_ids = {"files", "console", "settings", "theme", "about", "help"}
+        clean_order = [pid for pid in order if pid not in core_ids]
+
+        self.settings_manager.set("plugins", "order", clean_order)
+
+        if __package__:
+            from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+        else:
+            from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+
+        self.bus.emit(
+            TOPIC_PLUGINS_CHANGED,
+            PluginsChanged(
+                added=[],
+                removed=[],
+                enabled=[],
+                disabled=[],
+                order=clean_order
+            ),
+            source="app"
+        )
+
+    async def _svc_plugins_reload(self) -> dict:
+        import sys
+        import importlib
+        import importlib.metadata
+        if hasattr(importlib.metadata, "invalidate_caches"):
+            importlib.metadata.invalidate_caches()
+        importlib.invalidate_caches()
+
+        self.load_user_plugins_sys_path()
+
+        tabs = self.query_one(TabbedContent)
+        mounted_ids = set()
+        for pane in list(tabs.children):
+            if pane.id and pane.id.startswith("plugin-") and pane.id != "plugin-manager":
+                mounted_ids.add(pane.id)
+
+        self.plugins.discover()
+
+        disabled_set = set(self.settings_manager.get("plugins", "disabled", []))
+        order_list = self.settings_manager.get("plugins", "order", [])
+
+        def sort_key(lp):
+            try:
+                return (order_list.index(lp.spec.id), lp.spec.title)
+            except ValueError:
+                return (len(order_list) + (lp.spec.order or 1000), lp.spec.title)
+
+        self.plugins.loaded.sort(key=sort_key)
+
+        # Unmount disabled/uninstalled ones
+        current_loaded_ids = {lp.spec.id for lp in self.plugins.loaded if lp.spec.id not in disabled_set}
+        for pane_id in mounted_ids:
+            if pane_id not in current_loaded_ids:
+                try:
+                    lp = next((lp for lp in self.plugins.loaded if lp.spec.id == pane_id), None)
+                    if lp and lp.scoped_bus:
+                        lp.scoped_bus.dispose_all()
+                    tabs.remove_pane(pane_id)
+                    logger.info("hot-unmounted plugin tab %s", pane_id)
+                except Exception:
+                    logger.exception("Failed to hot-unmount plugin %s", pane_id)
+
+        # Mount newly enabled ones
+        added = []
+        for lp in self.plugins.loaded:
+            if lp.spec.id in disabled_set:
+                continue
+
+            try:
+                tabs.get_pane(lp.spec.id)
+                continue
+            except Exception:
+                pass
+
+            try:
+                widget = lp.plugin.create_widget()
+                if __package__:
+                    from .plugins import ScopedBus
+                else:
+                    from plugins import ScopedBus
+                lp.scoped_bus = ScopedBus(self.bus, lp.spec.id, lp.spec.provides)
+                widget._bus = lp.scoped_bus
+
+                active_ids = [l.spec.id for l in self.plugins.loaded if l.spec.id not in disabled_set]
+                try:
+                    idx = active_ids.index(lp.spec.id)
+                    target = active_ids[idx - 1] if idx > 0 else None
+                except ValueError:
+                    target = None
+
+                has_target = False
+                if target:
+                    try:
+                        tabs.get_pane(target)
+                        has_target = True
+                    except Exception:
+                        pass
+
+                kwargs = {"after": target} if has_target else {}
+                await tabs.add_pane(TabPane(lp.spec.title, widget, id=lp.spec.id), **kwargs)
+
+                if lp.spec.help_doc and lp.spec.help_doc.is_file():
+                    await self.bus.call(SVC_HELP_ADD_ENTRY, title=lp.spec.title, path=lp.spec.help_doc)
+
+                added.append(lp.spec.id)
+                logger.info("hot-mounted plugin tab %s", lp.spec.id)
+            except Exception as exc:
+                if lp.scoped_bus:
+                    lp.scoped_bus.dispose_all()
+                self.plugins.errors.append((lp.name, f"hot-mount failed: {exc!r}"))
+                logger.exception("hot-mount crash isolation for plugin %s", lp.spec.id)
+                self.notify(f"Plugin {lp.spec.title} failed to mount: {exc!r}", severity="error")
+
+        if __package__:
+            from .bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+        else:
+            from bus_contract import TOPIC_PLUGINS_CHANGED, PluginsChanged
+
+        self.bus.emit(
+            TOPIC_PLUGINS_CHANGED,
+            PluginsChanged(
+                added=added,
+                removed=[],
+                enabled=[],
+                disabled=[],
+                order=list(self.settings_manager.get("plugins", "order", []))
+            ),
+            source="app"
+        )
+        return {"added": added}
+
+    async def _svc_settings_focus_section(self, section: str) -> None:
+        if __package__:
+            from .tabs.settings import SettingsTab
+        else:
+            from tabs.settings import SettingsTab
+        self.query_one(TabbedContent).active = "settings"
+        settings_tab = self.query_one(SettingsTab)
+        success = settings_tab.focus_section(section)
+        if not success:
+            self.notify(f"Unknown or disabled settings section: {section}", severity="warning")
+
+
+class ConfirmModal(ModalScreen[bool]):
+    DEFAULT_CSS = """
+    ConfirmModal {
+        align: center middle;
+    }
+    #confirm-modal-grid {
+        grid-size: 1;
+        grid-rows: auto 3;
+        background: $surface;
+        padding: 1 2;
+        border: thick $accent;
+        width: 60;
+        height: auto;
+    }
+    #confirm-modal-buttons {
+        layout: horizontal;
+        align: right middle;
+        height: 3;
+        margin-top: 1;
+    }
+    #confirm-modal-buttons Button {
+        margin-left: 1;
+    }
+    """
+    def __init__(self, message: str) -> None:
+        super().__init__()
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        from textual.containers import Grid, Horizontal
+        from textual.widgets import Button, Label
+        yield Grid(
+            Label(self.message),
+            Horizontal(
+                Button("Cancel", variant="error", id="no"),
+                Button("Confirm", variant="primary", id="yes"),
+                id="confirm-modal-buttons"
+            ),
+            id="confirm-modal-grid"
+        )
+
+    def on_button_pressed(self, event) -> None:
+        if event.button.id == "yes":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
 
     
 
