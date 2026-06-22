@@ -1057,7 +1057,7 @@ class PluginMountIntegrationTests(unittest.TestCase):
                         "0.1.0",
                         deps=["etui>=0.3.0", "httpx>=0.27"],
                     )
-                    write_distribution(helper_site_packages, "etui", "0.4.0")
+                    write_distribution(helper_site_packages, "etui", "0.5.0")
                     return make_proc([b"artifact output\n"], [])
                 mock_exec.side_effect = artifact_side_effect
 

@@ -872,7 +872,7 @@ class EtuiApp(App):
             import importlib.metadata as md
             ver = md.version("etui")
         except Exception:
-            ver = "0.4.0"
+            ver = "0.5.0"
 
         core_tabs = [
             {"id": "files", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "Workspace file explorer and editor", "errors": None},

@@ -30,7 +30,7 @@ class PluginManagerTabTests(unittest.IsolatedAsyncioTestCase):
         
         # Mock central services
         mock_plugins_list = [
-            {"id": "files", "dist": "etui", "version": "0.4.0", "source": "core", "enabled": True, "status": "loaded", "summary": "Workspace files", "errors": None},
+            {"id": "files", "dist": "etui", "version": "0.5.0", "source": "core", "enabled": True, "status": "loaded", "summary": "Workspace files", "errors": None},
             {"id": "plugin-mocktab", "dist": "etui-mock", "version": "0.1.0", "source": "third-party", "enabled": True, "status": "loaded", "summary": "Mock Tab", "errors": None, "settings_section": "mocktab"},
             {"id": "plugin-default", "dist": "etui-default", "version": "0.1.0", "source": "default", "enabled": True, "status": "loaded", "summary": "Default Tab", "errors": None, "settings_section": None},
             {"id": "plugin-other", "dist": "etui-other", "version": "0.1.0", "source": "third-party", "enabled": True, "status": "loaded", "summary": "Other Tab", "errors": None, "settings_section": None},
