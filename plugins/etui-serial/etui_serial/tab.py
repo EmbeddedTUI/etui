@@ -87,7 +87,7 @@ class SerialTab(CancelOnLeaveMixin, BusMixin, Vertical):
         baud_select = self.query_one("#serial-baud", Select)
         
         if port_select.value in (Select.BLANK, Select.NULL):
-            self.app.notify("Please select a serial port", variant="error")
+            self.app.notify("Please select a serial port", severity="error")
             return
 
         port = port_select.value
@@ -100,7 +100,7 @@ class SerialTab(CancelOnLeaveMixin, BusMixin, Vertical):
             self.query_one("#serial-log", RichLog).write(f"Connected to [bold]{port}[/bold] at {baud} baud")
             self.run_worker(self.read_serial, name="serial-reader", group="serial", thread=True)
         except Exception as e:
-            self.app.notify(f"Failed to connect: {e}", variant="error")
+            self.app.notify(f"Failed to connect: {e}", severity="error")
             if self.serial_port:
                 self.serial_port.close()
                 self.serial_port = None
@@ -156,4 +156,4 @@ class SerialTab(CancelOnLeaveMixin, BusMixin, Vertical):
             except Exception as e:
                 self.query_one("#serial-log", RichLog).write(f"[red]Error writing to serial: {e}[/red]")
         else:
-            self.app.notify("Serial port not connected", variant="warning")
+            self.app.notify("Serial port not connected", severity="warning")
