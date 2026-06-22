@@ -1,5 +1,4 @@
 import asyncio
-from pathlib import Path
 from typing import Any
 
 from textual.app import ComposeResult
@@ -22,6 +21,7 @@ from etui.contracts import (
     plugins_reload,
     settings_focus_section,
     on_plugins_changed,
+    on_plugin_install_progress,
 )
 
 SOURCE_ORDER = {"core": 0, "default": 1, "third-party": 2}
@@ -117,12 +117,13 @@ class PluginManagerTab(CancelOnLeaveMixin, BusMixin, Vertical):
         super().__init__()
         self.plugins_data: list[dict] = []
         self.selected_plugin_id: str | None = None
+        self._active_install_spec: str | None = None
+        self._active_uninstall_dist: str | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="install-bar"):
-            yield Input(placeholder="Package name, Git URL, or local path", id="txt-install-spec")
+            yield Input(placeholder="Package, Git URL, local path, or PDM dist artifact", id="txt-install-spec")
             yield Button("Install", id="btn-install", variant="primary")
-            yield Button("Set Up Installer", id="btn-bootstrap-uv", variant="warning")
             yield Label("", id="install-summary")
 
         with Horizontal(id="middle-layout"):
@@ -163,16 +164,30 @@ class PluginManagerTab(CancelOnLeaveMixin, BusMixin, Vertical):
         
         # Subscribe to plugins changed notifications
         self._disposer = on_plugins_changed(self.bus, self._refresh)
+        self._progress_disposer = on_plugin_install_progress(self.bus, self._install_progress)
 
     def on_unmount(self) -> None:
         if hasattr(self, "_disposer"):
             self._disposer()
+        if hasattr(self, "_progress_disposer"):
+            self._progress_disposer()
         parent_on_unmount = getattr(super(), "on_unmount", None)
         if parent_on_unmount is not None:
             parent_on_unmount()
 
     def _refresh(self, event: Any) -> None:
         self.run_worker(self.populate_table())
+
+    def _install_progress(self, event: Any) -> None:
+        if self._active_install_spec and event.spec != self._active_install_spec:
+            return
+        log = self.query_one("#log-view", RichLog)
+        prefix = {
+            "stderr": "[stderr]",
+            "error": "[error]",
+            "stdout": "[pip]",
+        }.get(event.stream, "[install]")
+        log.write(f"{prefix} {event.message}")
 
     async def populate_table(self) -> None:
         table = self.query_one("#plugins-table", DataTable)
@@ -315,8 +330,6 @@ class PluginManagerTab(CancelOnLeaveMixin, BusMixin, Vertical):
         btn_id = event.button.id
         if btn_id == "btn-install":
             await self.install_plugin()
-        elif btn_id == "btn-bootstrap-uv":
-            await self.bootstrap_uv()
         elif btn_id == "btn-toggle-enable":
             await self.toggle_plugin_enable()
         elif btn_id == "btn-configure":
@@ -336,36 +349,26 @@ class PluginManagerTab(CancelOnLeaveMixin, BusMixin, Vertical):
             
         log = self.query_one("#log-view", RichLog)
         log.write(f"Installing plugin '{spec}'...")
+        self._active_install_spec = spec
         
         spec_input.value = ""
         btn_install = self.query_one("#btn-install", Button)
         btn_install.disabled = True
-        
+        self.run_worker(self._install_plugin_worker(spec), name="plugin-install", exclusive=True)
+
+    async def _install_plugin_worker(self, spec: str) -> None:
+        btn_install = self.query_one("#btn-install", Button)
+        log = self.query_one("#log-view", RichLog)
         try:
             res = await plugins_install(self.bus, spec)
             log.write(f"✓ Successfully installed plugin: {res.get('dist', spec)}")
             await plugins_reload(self.bus)
         except Exception as exc:
-            log.write(f"❌ Installation failed: {exc!r}", style="color: $error;")
+            log.write(f"Installation failed: {exc!r}")
             self.notify(f"Install failed: {exc!r}", severity="error")
         finally:
+            self._active_install_spec = None
             btn_install.disabled = False
-            await self.populate_table()
-
-    async def bootstrap_uv(self) -> None:
-        log = self.query_one("#log-view", RichLog)
-        log.write("Bootstrapping uv package manager...")
-        btn = self.query_one("#btn-bootstrap-uv", Button)
-        btn.disabled = True
-        
-        try:
-            res = await plugins_install(self.bus, "bootstrap-uv")
-            log.write(f"✓ uv bootstrapper finished. Installer path: {res.get('installer')}")
-        except Exception as exc:
-            log.write(f"❌ uv bootstrap failed: {exc!r}", style="color: $error;")
-            self.notify(f"Bootstrap failed: {exc!r}", severity="error")
-        finally:
-            btn.disabled = False
             await self.populate_table()
 
     async def uninstall_plugin(self) -> None:
@@ -379,16 +382,26 @@ class PluginManagerTab(CancelOnLeaveMixin, BusMixin, Vertical):
         dist_name = item["dist"]
         log = self.query_one("#log-view", RichLog)
         log.write(f"Uninstalling third-party plugin '{dist_name}'...")
-        
+
+        self._active_uninstall_dist = dist_name
+        btn_uninstall = self.query_one("#btn-uninstall", Button)
+        btn_uninstall.disabled = True
+        self.run_worker(self._uninstall_plugin_worker(dist_name), name="plugin-uninstall", exclusive=True)
+
+    async def _uninstall_plugin_worker(self, dist_name: str) -> None:
+        btn_uninstall = self.query_one("#btn-uninstall", Button)
+        log = self.query_one("#log-view", RichLog)
         try:
             await plugins_uninstall(self.bus, dist_name)
             log.write(f"✓ Successfully uninstalled plugin: {dist_name}")
-            await plugins_reload(self.bus)
-            self.selected_plugin_id = None
+            if self.selected_plugin_id:
+                self.selected_plugin_id = None
         except Exception as exc:
-            log.write(f"❌ Uninstallation failed: {exc!r}", style="color: $error;")
+            log.write(f"Uninstallation failed: {exc!r}")
             self.notify(f"Uninstall failed: {exc!r}", severity="error")
         finally:
+            self._active_uninstall_dist = None
+            btn_uninstall.disabled = False
             await self.populate_table()
 
     async def toggle_plugin_enable(self) -> None:
@@ -414,7 +427,7 @@ class PluginManagerTab(CancelOnLeaveMixin, BusMixin, Vertical):
             log.write(f"✓ {action_str} plugin {item['id']} success. Reloading...")
             await plugins_reload(self.bus)
         except Exception as exc:
-            log.write(f"❌ Failed to toggle enabled: {exc!r}", style="color: $error;")
+            log.write(f"Failed to toggle enabled: {exc!r}")
             self.notify(f"Failed to toggle plugin: {exc!r}", severity="error")
         finally:
             await self.populate_table()

@@ -59,6 +59,8 @@ if __package__:
         SVC_PLUGINS_SET_ORDER,
         SVC_PLUGINS_RELOAD,
         SVC_SETTINGS_FOCUS_SECTION,
+        TOPIC_PLUGINS_INSTALL_PROGRESS,
+        PluginInstallProgress,
     )
 else:
     from tabs.help import HelpTab, OpenDocFile
@@ -97,6 +99,8 @@ else:
         SVC_PLUGINS_SET_ORDER,
         SVC_PLUGINS_RELOAD,
         SVC_SETTINGS_FOCUS_SECTION,
+        TOPIC_PLUGINS_INSTALL_PROGRESS,
+        PluginInstallProgress,
     )
 
 class CommandMessage(Message):
@@ -510,20 +514,208 @@ class EtuiApp(App):
 
     def load_user_plugins_sys_path(self) -> None:
         user_plugin_dir = self.get_user_plugin_dir()
+        user_plugin_root = user_plugin_dir.resolve()
+        import sys
+        cleaned_sys_path: list[str] = []
+        for path_str in sys.path:
+            try:
+                path = Path(path_str).expanduser().resolve()
+            except Exception:
+                cleaned_sys_path.append(path_str)
+                continue
+            if user_plugin_root in path.parents and not path.exists():
+                continue
+            cleaned_sys_path.append(path_str)
+        sys.path[:] = cleaned_sys_path
         if user_plugin_dir.is_dir():
-            import sys
             for path in user_plugin_dir.iterdir():
                 if path.is_dir() and not path.name.startswith("."):
                     path_str = str(path)
                     if path_str not in sys.path:
                         sys.path.insert(0, path_str)
 
+    def _resolve_plugin_install_spec(self, spec: str) -> str:
+        if "://" in spec or spec.startswith("git+"):
+            return spec
+
+        raw_path = Path(spec).expanduser()
+        candidates: list[Path]
+        if raw_path.is_absolute():
+            candidates = [raw_path]
+        else:
+            candidates = []
+            if self.workspace_root:
+                candidates.append(Path(self.workspace_root) / raw_path)
+            candidates.append(Path.cwd() / raw_path)
+
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved.is_file():
+                return str(resolved)
+            if resolved.is_dir():
+                artifact = self._latest_pdm_build_artifact(resolved)
+                if artifact is not None:
+                    return str(artifact)
+                return str(resolved)
+
+        return spec
+
+    @staticmethod
+    def _latest_pdm_build_artifact(path: Path) -> Path | None:
+        search_dirs = [path] if path.name == "dist" else [path / "dist", path]
+        for search_dir in search_dirs:
+            if not search_dir.is_dir():
+                continue
+            wheels = sorted(
+                search_dir.glob("*.whl"),
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            )
+            if wheels:
+                return wheels[0].resolve()
+            sdists = sorted(
+                search_dir.glob("*.tar.gz"),
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            )
+            if sdists:
+                return sdists[0].resolve()
+        return None
+
+    @staticmethod
+    def _write_pdm_helper_project(project_dir: Path) -> None:
+        host_root = Path(__file__).resolve().parents[1]
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "pyproject.toml").write_text(
+            "\n".join(
+                [
+                    "[build-system]",
+                    'requires = ["pdm-backend"]',
+                    'build-backend = "pdm.backend"',
+                    "",
+                    "[project]",
+                    'name = "etui-plugin-install-helper"',
+                    'version = "0.0.0"',
+                    f'requires-python = ">={sys.version_info.major}.{sys.version_info.minor},<{sys.version_info.major}.{sys.version_info.minor + 2}"',
+                    f'dependencies = ["etui @ {host_root.as_uri()}"]',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (project_dir / "pdm.toml").write_text(
+            "[venv]\nin_project = true\n",
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _distribution_name_from_spec(spec: str) -> str:
+        if __package__:
+            from .plugins import normalize_dist_name
+        else:
+            from plugins import normalize_dist_name
+        path = Path(spec)
+        if path.suffix == ".whl" or path.name.endswith(".tar.gz"):
+            return normalize_dist_name(path.name.split("-", 1)[0])
+        return normalize_dist_name(spec)
+
+    @staticmethod
+    def _copy_distribution_files(src_root: Path, target_root: Path, dist_name: str) -> None:
+        import shutil
+        if __package__:
+            from .plugins import normalize_dist_name
+        else:
+            from plugins import normalize_dist_name
+
+        skip = {
+            "etui",
+            "pdm",
+            "pip",
+            "setuptools",
+            "wheel",
+            "virtualenv",
+            "installer",
+            "pdm-backend",
+        }
+
+        for entry in src_root.iterdir():
+            name = normalize_dist_name(entry.name.split("-", 1)[0].split(".", 1)[0])
+            if name in skip:
+                continue
+            dest = target_root / entry.name
+            if entry.is_dir():
+                shutil.copytree(entry, dest, dirs_exist_ok=True)
+            elif entry.is_file():
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(entry, dest)
+
+    @staticmethod
+    def _is_local_build_artifact(spec: str) -> bool:
+        path = Path(spec)
+        return path.is_file() and (path.suffix == ".whl" or path.name.endswith(".tar.gz"))
+
+    @staticmethod
+    def _requires_dist_from_artifact(path: Path) -> list[str]:
+        import email
+        import tarfile
+        import zipfile
+
+        metadata = ""
+        if path.suffix == ".whl":
+            with zipfile.ZipFile(path) as wheel:
+                metadata_name = next(
+                    (
+                        name
+                        for name in wheel.namelist()
+                        if name.endswith(".dist-info/METADATA")
+                    ),
+                    None,
+                )
+                if metadata_name:
+                    metadata = wheel.read(metadata_name).decode(errors="replace")
+        elif path.name.endswith(".tar.gz"):
+            with tarfile.open(path, "r:gz") as sdist:
+                member = next(
+                    (
+                        item
+                        for item in sdist.getmembers()
+                        if item.name.endswith("/PKG-INFO")
+                    ),
+                    None,
+                )
+                if member:
+                    extracted = sdist.extractfile(member)
+                    if extracted is not None:
+                        metadata = extracted.read().decode(errors="replace")
+
+        if not metadata:
+            return []
+        message = email.message_from_string(metadata)
+        return list(message.get_all("Requires-Dist", []))
+
+    @staticmethod
+    def _requirement_name(requirement: str) -> str:
+        import re
+
+        return re.split(r"\s|<|>|=|!|~|;|\[", requirement, maxsplit=1)[0].strip()
+
+    @classmethod
+    def _plugin_artifact_dependencies(cls, artifact: Path) -> list[str]:
+        deps = []
+        for requirement in cls._requires_dist_from_artifact(artifact):
+            name = cls._requirement_name(requirement).lower().replace("_", "-")
+            if name == "etui":
+                continue
+            if "extra ==" in requirement:
+                continue
+            deps.append(requirement)
+        return deps
+
     async def confirm_action(self, message: str) -> bool:
         if getattr(self, "testing", False) or os.environ.get("ETUI_TEST") == "1":
             return True
         screen = ConfirmModal(message)
-        self.push_screen(screen)
-        return await screen.wait_for_dismiss()
+        return bool(await self.push_screen_wait(screen))
 
     def _emit_plugins_changed(
         self,
@@ -550,6 +742,19 @@ class EtuiApp(App):
                 if order is None
                 else order,
             ),
+            source="app",
+        )
+
+    def _emit_plugin_install_progress(
+        self,
+        spec: str,
+        message: str,
+        *,
+        stream: str = "info",
+    ) -> None:
+        self.bus.emit(
+            TOPIC_PLUGINS_INSTALL_PROGRESS,
+            PluginInstallProgress(spec=spec, message=message, stream=stream),
             source="app",
         )
 
@@ -690,92 +895,154 @@ class EtuiApp(App):
     async def _svc_plugins_install(
         self, spec: str, *, upgrade: bool = False, caller: str = "host"
     ) -> dict:
+        self._emit_plugin_install_progress(spec, "Waiting for confirmation...")
         approved = await self.confirm_action(
             f"Install plugin '{spec}' requested by {caller}?"
         )
         if not approved:
+            self._emit_plugin_install_progress(spec, "Installation cancelled.", stream="error")
             raise PermissionError("Installation cancelled by user.")
 
         user_plugin_dir = self.get_user_plugin_dir()
         user_plugin_dir.mkdir(parents=True, exist_ok=True)
 
-        if spec == "bootstrap-uv":
-            raise RuntimeError(
-                "uv bootstrap is not configured. Install uv or pip on PATH, "
-                "or configure a checksum-pinned bootstrap release."
-            )
+        install_spec = self._resolve_plugin_install_spec(spec)
+        if install_spec != spec:
+            self._emit_plugin_install_progress(spec, f"Resolved artifact: {install_spec}")
 
-        bin_dir = user_plugin_dir.parent / "bin"
-        local_uv = bin_dir / "uv"
-        installer = None
-        if local_uv.is_file() and os.access(local_uv, os.X_OK):
-            installer = str(local_uv)
-        else:
-            import shutil
-            installer = shutil.which("uv") or shutil.which("pip") or shutil.which("pip3")
+        helper_root = user_plugin_dir / ".tmp_install"
+        import shutil
+        installer = shutil.which("pdm")
 
         if not installer:
-            raise RuntimeError("No package installer (uv or pip) found on PATH.")
+            self._emit_plugin_install_progress(spec, "No package installer found.", stream="error")
+            raise RuntimeError("No package installer (pdm) found on PATH.")
+        self._emit_plugin_install_progress(spec, f"Using installer: {installer}")
 
-        tmp_dir = user_plugin_dir / ".tmp_install"
-        if tmp_dir.exists():
-            import shutil
-            shutil.rmtree(tmp_dir)
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-
-        cmd = []
-        if "uv" in installer:
-            cmd = [installer, "pip", "install", "--target", str(tmp_dir), spec]
-        else:
-            cmd = [installer, "install", "--target", str(tmp_dir), spec]
-        if upgrade:
-            cmd.append("--upgrade")
+        if helper_root.exists():
+            self._emit_plugin_install_progress(spec, f"Removing stale helper project: {helper_root}")
+            shutil.rmtree(helper_root)
+        self._write_pdm_helper_project(helper_root)
+        self._emit_plugin_install_progress(spec, f"Installing into helper project: {helper_root}")
 
         import asyncio
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+        env = os.environ.copy()
+        env["PDM_IGNORE_ACTIVE_VENV"] = "1"
+
+        async def run_install_command(
+            cmd: list[str],
+            *,
+            cwd: Path,
+            emit_stdout: bool = True,
+        ) -> list[str]:
+            self._emit_plugin_install_progress(spec, "Running: " + " ".join(cmd))
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(cwd),
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            assert proc.stdout is not None
+            assert proc.stderr is not None
+
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
+
+            async def stream_reader(reader: asyncio.StreamReader, stream: str) -> None:
+                while True:
+                    line = await reader.readline()
+                    if not line:
+                        break
+                    text = line.decode(errors="replace").rstrip()
+                    if not text:
+                        continue
+                    if stream == "stdout":
+                        stdout_lines.append(text)
+                        if not emit_stdout:
+                            continue
+                    if stream == "stderr":
+                        stderr_lines.append(text)
+                    self._emit_plugin_install_progress(spec, text, stream=stream)
+
+            await asyncio.gather(
+                stream_reader(proc.stdout, "stdout"),
+                stream_reader(proc.stderr, "stderr"),
+                proc.wait(),
+            )
+            if proc.returncode != 0:
+                err_msg = "\n".join(stderr_lines)
+                self._emit_plugin_install_progress(
+                    spec,
+                    f"Installer exited with status {proc.returncode}.",
+                    stream="error",
+                )
+                raise RuntimeError(f"Installation failed: {err_msg}")
+            return stdout_lines
+
+        cmd = [installer, "add", install_spec]
+        if upgrade:
+            cmd.append("--upgrade")
+        await run_install_command(cmd, cwd=helper_root)
+        self._emit_plugin_install_progress(spec, "Installer finished successfully.")
+
+        self._emit_plugin_install_progress(spec, "Resolving helper site-packages...")
+        purelib_output = await run_install_command(
+            [
+                installer,
+                "run",
+                "python",
+                "-c",
+                "import sysconfig; print(sysconfig.get_paths()['purelib'])",
+            ],
+            cwd=helper_root,
+            emit_stdout=False,
         )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            err_msg = stderr.decode(errors="replace")
-            import shutil
-            if tmp_dir.exists():
-                shutil.rmtree(tmp_dir)
-            raise RuntimeError(f"Installation failed: {err_msg}")
+        purelib_text = next((line for line in purelib_output if line.strip()), "")
+        if not purelib_text:
+            raise RuntimeError("Helper site-packages path was not reported by PDM.")
+        purelib = Path(purelib_text).expanduser()
+        if not purelib.is_dir():
+            raise RuntimeError(f"Helper site-packages not found: {purelib}")
 
-        dist_infos = list(tmp_dir.glob("*.dist-info"))
-        if not dist_infos:
-            dist_infos = list(tmp_dir.glob("*.egg-info"))
-        if not dist_infos:
-            import shutil
-            shutil.rmtree(tmp_dir)
-            raise RuntimeError("No distribution metadata (*.dist-info) found in installation.")
-
+        import importlib.metadata
         if __package__:
-            from .plugins import dist_name_from_metadata_dir
+            from .plugins import normalize_dist_name, dist_name_from_metadata_dir
         else:
-            from plugins import dist_name_from_metadata_dir
-        dist_name = dist_name_from_metadata_dir(dist_infos[0])
+            from plugins import normalize_dist_name, dist_name_from_metadata_dir
+
+        dist_name = None
+        primary_name = self._distribution_name_from_spec(install_spec)
+        for dist in importlib.metadata.distributions(path=[str(purelib)]):
+            name = normalize_dist_name(dist.metadata.get("Name", ""))
+            if name and name not in {"etui", "pdm", "pip", "setuptools", "wheel", "virtualenv", "installer", "pdm_backend"}:
+                if name == primary_name:
+                    dist_name = name
+                    break
+        if dist_name is None:
+            dist_infos = list(purelib.glob("*.dist-info"))
+            if not dist_infos:
+                dist_infos = list(purelib.glob("*.egg-info"))
+            if not dist_infos:
+                raise RuntimeError("No distribution metadata (*.dist-info) found in installation.")
+            dist_name = dist_name_from_metadata_dir(dist_infos[0])
+        self._emit_plugin_install_progress(spec, f"Detected distribution: {dist_name}")
 
         target_dir = (user_plugin_dir / dist_name).resolve()
         if not target_dir.is_relative_to(user_plugin_dir.resolve()):
+            self._emit_plugin_install_progress(spec, "Install target escapes plugin directory.", stream="error")
             raise ValueError("Plugin install target escapes the managed plugin directory.")
-        import shutil
         if target_dir.exists():
+            self._emit_plugin_install_progress(spec, f"Replacing existing install: {target_dir}")
             shutil.rmtree(target_dir)
 
         target_dir.mkdir(parents=True, exist_ok=True)
-        for path in tmp_dir.iterdir():
-            shutil.move(str(path), str(target_dir / path.name))
+        self._emit_plugin_install_progress(spec, f"Copying installed packages into: {target_dir}")
+        self._copy_distribution_files(purelib, target_dir, dist_name)
 
-        if tmp_dir.exists():
-            shutil.rmtree(tmp_dir)
+        if helper_root.exists():
+            shutil.rmtree(helper_root)
 
-        import sys
-        import importlib
-        import importlib.metadata
         if hasattr(importlib.metadata, "invalidate_caches"):
             importlib.metadata.invalidate_caches()
         importlib.invalidate_caches()
@@ -784,8 +1051,9 @@ class EtuiApp(App):
         if path_str not in sys.path:
             sys.path.insert(0, path_str)
 
+        self._emit_plugin_install_progress(spec, "Install complete. Reloading plugins...")
         self._emit_plugins_changed(added=[dist_name])
-        return {"dist": dist_name, "success": True}
+        return {"dist": dist_name, "success": True, "spec": install_spec}
 
     async def _svc_plugins_uninstall(self, dist: str, *, caller: str = "host") -> None:
         if __package__:
@@ -815,9 +1083,23 @@ class EtuiApp(App):
         target_dir = (user_plugin_dir / normalized_dist).resolve()
         if not target_dir.is_relative_to(user_plugin_dir.resolve()):
             raise ValueError("Plugin uninstall target escapes the managed plugin directory.")
+        if lp is not None:
+            try:
+                await self._hot_unmount_plugin_tab(lp.spec.id, {lp.spec.id: lp})
+            except Exception:
+                logger.exception("Failed to hot-unmount uninstalled plugin %s", lp.spec.id)
+            self.plugins.loaded = [item for item in self.plugins.loaded if item.spec.id != lp.spec.id]
+            self.plugins.errors = [
+                item for item in self.plugins.errors if item[0] not in {lp.name, lp.spec.id}
+            ]
         if target_dir.is_dir():
             import shutil
             shutil.rmtree(target_dir)
+            path_str = str(target_dir)
+            if path_str in sys.path:
+                sys.path.remove(path_str)
+            self._emit_plugins_changed(removed=[normalized_dist])
+        elif lp is not None:
             self._emit_plugins_changed(removed=[normalized_dist])
 
     async def _svc_plugins_set_enabled(

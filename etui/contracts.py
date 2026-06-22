@@ -46,7 +46,9 @@ if __package__:
         SVC_PLUGINS_RELOAD,
         SVC_SETTINGS_FOCUS_SECTION,
         TOPIC_PLUGINS_CHANGED,
+        TOPIC_PLUGINS_INSTALL_PROGRESS,
         PluginsChanged,
+        PluginInstallProgress,
     )
 else:
     from bus_contract import (
@@ -75,7 +77,9 @@ else:
         SVC_PLUGINS_RELOAD,
         SVC_SETTINGS_FOCUS_SECTION,
         TOPIC_PLUGINS_CHANGED,
+        TOPIC_PLUGINS_INSTALL_PROGRESS,
         PluginsChanged,
+        PluginInstallProgress,
     )
 
 
@@ -209,11 +213,11 @@ async def plugins_list(bus: ContractBus) -> list[dict]:
 
 
 async def plugins_install(bus: ContractBus, spec: str, *, upgrade: bool = False) -> dict:
-    return await bus.call(SVC_PLUGINS_INSTALL, spec=spec, upgrade=upgrade)  # type: ignore[return-value]
+    return await bus.call(SVC_PLUGINS_INSTALL, timeout=None, spec=spec, upgrade=upgrade)  # type: ignore[return-value]
 
 
 async def plugins_uninstall(bus: ContractBus, dist: str) -> None:
-    await bus.call(SVC_PLUGINS_UNINSTALL, dist=dist)
+    await bus.call(SVC_PLUGINS_UNINSTALL, timeout=None, dist=dist)
 
 
 async def plugins_set_enabled(bus: ContractBus, plugin_id: str, enabled: bool) -> None:
@@ -244,6 +248,18 @@ def on_plugins_changed(
     return bus.subscribe(TOPIC_PLUGINS_CHANGED, _handle)
 
 
+def on_plugin_install_progress(
+    bus: ContractBus,
+    handler: Callable[[PluginInstallProgress], None],
+) -> "Disposer":
+    def _handle(event: "Event") -> None:
+        payload = event.payload
+        if isinstance(payload, PluginInstallProgress):
+            handler(payload)
+
+    return bus.subscribe(TOPIC_PLUGINS_INSTALL_PROGRESS, _handle)
+
+
 __all__ = [
     "debug_get_gdbserver_status",
     "debug_restart_probe",
@@ -265,4 +281,5 @@ __all__ = [
     "plugins_reload",
     "settings_focus_section",
     "on_plugins_changed",
+    "on_plugin_install_progress",
 ]

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock
 
 from textual.app import App, ComposeResult
-from textual.widgets import DataTable, Label, Button
+from textual.widgets import DataTable, Label, Button, Input
 from etui_plugin_manager.tab import PluginManagerTab
 from etui.bus import MessageBus
 from etui.bus_contract import PluginsChanged, TOPIC_PLUGINS_CHANGED
@@ -52,6 +52,9 @@ class PluginManagerTabTests(unittest.IsolatedAsyncioTestCase):
         
         mock_set_order = AsyncMock()
         bus.provide("plugins.set_order", mock_set_order)
+
+        mock_install = AsyncMock(return_value={"dist": "etui-new", "success": True})
+        bus.provide("plugins.install", mock_install)
 
         app = PluginManagerTestApp(bus)
         
@@ -121,6 +124,7 @@ class PluginManagerTabTests(unittest.IsolatedAsyncioTestCase):
 
             # 7. Test Uninstall Action Button click
             await tab.uninstall_plugin()
+            await pilot.pause()
             mock_uninstall.assert_called_once_with(dist="etui-mock")
 
             # 8. Test bus event TOPIC_PLUGINS_CHANGED refreshes table
@@ -137,3 +141,10 @@ class PluginManagerTabTests(unittest.IsolatedAsyncioTestCase):
             
             self.assertEqual(table.row_count, 5)
             self.assertIn("5 plugins", str(summary.content))
+
+            install_input = tab.query_one("#txt-install-spec", Input)
+            install_input.value = "etui-new"
+            await tab.install_plugin()
+            await pilot.pause()
+            mock_install.assert_called_once_with(spec="etui-new", upgrade=False)
+            self.assertFalse(tab.query_one("#btn-install", Button).disabled)

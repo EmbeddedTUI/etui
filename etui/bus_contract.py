@@ -68,6 +68,8 @@ SVC_SETTINGS_FOCUS_SECTION = "settings.focus_section"
 
 # Event: plugins.changed (TOPIC_PLUGINS_CHANGED)
 TOPIC_PLUGINS_CHANGED = "plugins.changed"
+# Event: plugins.install_progress (TOPIC_PLUGINS_INSTALL_PROGRESS)
+TOPIC_PLUGINS_INSTALL_PROGRESS = "plugins.install_progress"
 
 
 @dataclass(frozen=True)
@@ -116,3 +118,10 @@ class PluginsChanged:
     enabled: list[str]
     disabled: list[str]
     order: list[str]
+
+
+@dataclass(frozen=True)
+class PluginInstallProgress:
+    spec: str
+    message: str
+    stream: str = "info"

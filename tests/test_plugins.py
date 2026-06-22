@@ -4,7 +4,7 @@
 import asyncio
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from typing import Any
 
 from textual.widget import Widget
@@ -22,7 +22,9 @@ from etui.bus_contract import (
     SVC_WORKSPACE_SET_ROOT,
     TOPIC_TAB_ACTIVATED,
     TOPIC_TAB_DEACTIVATED,
+    TOPIC_PLUGINS_INSTALL_PROGRESS,
     TabEvent,
+    PluginInstallProgress,
 )
 
 
@@ -304,6 +306,32 @@ class DummyTab(CancelOnLeaveMixin):
     async def cancel_active_operation(self) -> None:
         self.cancelled = True
         self.busy = False
+
+
+class PluginContractsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_install_and_uninstall_disable_rpc_timeout(self) -> None:
+        from etui.contracts import plugins_install, plugins_uninstall
+
+        bus = MagicMock()
+        bus.call = AsyncMock(side_effect=[{"success": True}, None])
+
+        self.assertEqual(
+            await plugins_install(bus, "etui-demo", upgrade=True),
+            {"success": True},
+        )
+        await plugins_uninstall(bus, "etui_demo")
+
+        bus.call.assert_any_call(
+            "plugins.install",
+            timeout=None,
+            spec="etui-demo",
+            upgrade=True,
+        )
+        bus.call.assert_any_call(
+            "plugins.uninstall",
+            timeout=None,
+            dist="etui_demo",
+        )
 
 
 class CancelOnLeaveMixinTests(unittest.IsolatedAsyncioTestCase):
@@ -762,6 +790,28 @@ class PluginMountIntegrationTests(unittest.TestCase):
                     self.assertIn("Unknown or disabled settings section", mock_notify.call_args[0][0])
 
     @patch("etui.plugins._entry_points")
+    def test_confirm_action_uses_push_screen_wait(self, mock_eps: MagicMock) -> None:
+        _run_textual_test(self._test_confirm_action_uses_push_screen_wait(mock_eps))
+
+    async def _test_confirm_action_uses_push_screen_wait(self, mock_eps: MagicMock) -> None:
+        from etui.main import EtuiApp
+        from etui.settings import SettingsManager
+        import tempfile
+
+        mock_eps.return_value = []
+
+        with tempfile.TemporaryDirectory() as d:
+            settings_path = Path(d) / "settings.yaml"
+            app = EtuiApp()
+            app.settings_manager = SettingsManager(path=settings_path)
+            app.workspace_root = app.load_workspace_root()
+
+            async with app.run_test():
+                with patch.object(app, "push_screen_wait", AsyncMock(return_value=True)) as mock_push:
+                    self.assertTrue(await app.confirm_action("Confirm?"))
+                    mock_push.assert_called_once()
+
+    @patch("etui.plugins._entry_points")
     @patch("asyncio.create_subprocess_exec")
     @patch("shutil.which")
     def test_plugin_install_uninstall_and_degrade(self, mock_which: MagicMock, mock_exec: MagicMock, mock_eps: MagicMock) -> None:
@@ -770,17 +820,32 @@ class PluginMountIntegrationTests(unittest.TestCase):
     async def _test_plugin_install_uninstall_and_degrade(self, mock_which: MagicMock, mock_exec: MagicMock, mock_eps: MagicMock) -> None:
         from etui.main import EtuiApp
         from etui.settings import SettingsManager
+        import os
+        import sys
         import tempfile
+        import zipfile
 
         mock_eps.return_value = []
-        mock_which.return_value = "/mock/bin/pip"
+        mock_which.return_value = "/mock/bin/pdm"
 
-        # Mock pip process success
+        # Mock PDM process success
         from unittest.mock import AsyncMock
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"pip output", b""))
-        mock_exec.return_value = mock_proc
+        class MockStream:
+            def __init__(self, lines: list[bytes]) -> None:
+                self._lines = list(lines)
+
+            async def readline(self) -> bytes:
+                if self._lines:
+                    return self._lines.pop(0)
+                return b""
+
+        def make_proc(stdout_lines: list[bytes], stderr_lines: list[bytes]) -> MagicMock:
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.stdout = MockStream(stdout_lines)
+            proc.stderr = MockStream(stderr_lines)
+            proc.wait = AsyncMock(return_value=0)
+            return proc
 
         with tempfile.TemporaryDirectory() as d:
             settings_path = Path(d) / "settings.yaml"
@@ -788,41 +853,167 @@ class PluginMountIntegrationTests(unittest.TestCase):
             app.testing = True  # bypass confirmation dialog
             app.settings_manager = SettingsManager(path=settings_path)
             app.settings_manager.set("plugins", "user_plugin_dir", d)
-            app.workspace_root = app.load_workspace_root()
+            progress_events: list[PluginInstallProgress] = []
+            app.bus.subscribe(
+                TOPIC_PLUGINS_INSTALL_PROGRESS,
+                lambda event: progress_events.append(event.payload),
+            )
 
             async with app.run_test() as pilot:
+                app.workspace_root = d
+
                 # 1. Test degrade when no installer found
                 mock_which.return_value = None
                 with self.assertRaises(RuntimeError):
                     await app.bus.call("plugins.install", spec="etui-somepkg")
 
-                # 2. Test install argv structure with pip available
-                mock_which.return_value = "/mock/bin/pip"
-                
-                # Simulate dist-info directory creation inside target directory to satisfy metadata check
-                tmp_install_dir = Path(d) / ".tmp_install"
+                # 2. Test install argv structure with pdm available
+                mock_which.return_value = "/mock/bin/pdm"
+
+                helper_site_packages = (
+                    Path(d)
+                    / ".tmp_install"
+                    / "venv"
+                    / "lib"
+                    / f"python{sys.version_info.major}.{sys.version_info.minor}"
+                    / "site-packages"
+                )
+
+                def write_distribution(root: Path, name: str, version: str, *, deps: list[str] | None = None) -> None:
+                    pkg_name = name.replace("-", "_")
+                    pkg_dir = root / pkg_name
+                    pkg_dir.mkdir(parents=True, exist_ok=True)
+                    (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
+                    dist_info = root / f"{pkg_name}-{version}.dist-info"
+                    dist_info.mkdir(parents=True, exist_ok=True)
+                    metadata_lines = [
+                        "Metadata-Version: 2.4",
+                        f"Name: {name}",
+                        f"Version: {version}",
+                    ]
+                    for dep in deps or []:
+                        metadata_lines.append(f"Requires-Dist: {dep}")
+                    (dist_info / "METADATA").write_text("\n".join(metadata_lines) + "\n", encoding="utf-8")
+                    (dist_info / "RECORD").write_text(
+                        "\n".join(
+                            [
+                                f"{pkg_name}/__init__.py,,",
+                                f"{dist_info.name}/METADATA,,",
+                                f"{dist_info.name}/RECORD,,",
+                            ]
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+
                 def side_effect(*args, **kwargs):
-                    tmp_install_dir.mkdir(parents=True, exist_ok=True)
-                    (tmp_install_dir / "etui_somepkg-0.1.0.dist-info").mkdir(parents=True, exist_ok=True)
-                    return mock_proc
+                    if args[1] == "run":
+                        return make_proc([f"{helper_site_packages}\n".encode()], [])
+                    helper_site_packages.mkdir(parents=True, exist_ok=True)
+                    write_distribution(helper_site_packages, "etui-somepkg", "0.1.0")
+                    return make_proc([b"pdm output\n"], [])
                 mock_exec.side_effect = side_effect
 
                 res = await app.bus.call("plugins.install", spec="etui-somepkg")
                 self.assertTrue(res["success"])
                 self.assertEqual(res["dist"], "etui_somepkg")
-
-                # Assert correct pip call
-                mock_exec.assert_called_with(
-                    "/mock/bin/pip", "install", "--target", str(tmp_install_dir), "etui-somepkg",
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                self.assertTrue(
+                    any("Using installer: /mock/bin/pdm" in event.message for event in progress_events)
                 )
+                self.assertTrue(any(event.message == "pdm output" for event in progress_events))
+                self.assertTrue(
+                    any("Install complete" in event.message for event in progress_events)
+                )
+
+                # Assert correct pdm call
+                mock_exec.assert_any_call(
+                    "/mock/bin/pdm", "add", "etui-somepkg",
+                    env=ANY,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(Path(d) / ".tmp_install"),
+                )
+                mock_exec.assert_any_call(
+                    "/mock/bin/pdm", "run", "python", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])",
+                    env=ANY,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(Path(d) / ".tmp_install"),
+                )
+                self.assertEqual(mock_exec.call_args_list[0].kwargs["env"]["PDM_IGNORE_ACTIVE_VENV"], "1")
 
                 # Verify target folder moved
                 self.assertTrue((Path(d) / "etui_somepkg").is_dir())
+                self.assertTrue((Path(d) / "etui_somepkg" / "etui_somepkg" / "__init__.py").is_file())
 
-                # 3. Test plugins_uninstall
+                # 3. Test PDM build artifact resolution from a project directory
+                project_dir = Path(d) / "project"
+                dist_dir = project_dir / "dist"
+                dist_dir.mkdir(parents=True)
+                sdist = dist_dir / "etui_artifact-0.1.0.tar.gz"
+                wheel = dist_dir / "etui_artifact-0.1.0-py3-none-any.whl"
+                sdist.write_text("sdist")
+                with zipfile.ZipFile(wheel, "w") as zf:
+                    zf.writestr(
+                        "etui_artifact-0.1.0.dist-info/METADATA",
+                        "\n".join(
+                            [
+                                "Metadata-Version: 2.4",
+                                "Name: etui-artifact",
+                                "Version: 0.1.0",
+                                "Requires-Dist: etui>=0.3.0",
+                                "Requires-Dist: httpx>=0.27",
+                                "",
+                            ]
+                        ),
+                    )
+                os.utime(sdist, (1, 1))
+                os.utime(wheel, (2, 2))
+
+                mock_exec.reset_mock()
+                def artifact_side_effect(*args, **kwargs):
+                    if args[1] == "run":
+                        return make_proc([f"{helper_site_packages}\n".encode()], [])
+                    helper_site_packages.mkdir(parents=True, exist_ok=True)
+                    write_distribution(helper_site_packages, "httpx", "0.27.0")
+                    write_distribution(
+                        helper_site_packages,
+                        "etui-artifact",
+                        "0.1.0",
+                        deps=["etui>=0.3.0", "httpx>=0.27"],
+                    )
+                    write_distribution(helper_site_packages, "etui", "0.4.0")
+                    return make_proc([b"artifact output\n"], [])
+                mock_exec.side_effect = artifact_side_effect
+
+                res = await app.bus.call("plugins.install", spec="project")
+                self.assertTrue(res["success"])
+                self.assertEqual(res["dist"], "etui_artifact")
+                self.assertEqual(res["spec"], str(wheel.resolve()))
+                mock_exec.assert_any_call(
+                    "/mock/bin/pdm", "add", str(wheel.resolve()),
+                    env=ANY,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(Path(d) / ".tmp_install"),
+                )
+                mock_exec.assert_any_call(
+                    "/mock/bin/pdm", "run", "python", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])",
+                    env=ANY,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(Path(d) / ".tmp_install"),
+                )
+                self.assertTrue((Path(d) / "etui_artifact" / "etui_artifact" / "__init__.py").is_file())
+                self.assertTrue((Path(d) / "etui_artifact" / "httpx" / "__init__.py").is_file())
+                self.assertFalse((Path(d) / "etui" / "__init__.py").exists())
+
+                # 4. Test plugins_uninstall
                 await app.bus.call("plugins.uninstall", dist="etui_somepkg")
+                await app.bus.call("plugins.reload")
                 self.assertFalse((Path(d) / "etui_somepkg").exists())
+                plugin_ids = [item["id"] for item in await app.bus.call("plugins.list")]
+                self.assertNotIn("plugin-somepkg", plugin_ids)
 
 
 class GlobalGateTests(unittest.TestCase):
