@@ -8,32 +8,13 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import Center, ScrollableContainer, Vertical
-from textual.widgets import Button, Label, RichLog, Rule, Static, TabbedContent
+from textual.widgets import Button, Label, RichLog, Rule, Static, TabbedContent, TabPane
 
 if __package__ and "." in __package__:
     from ..version import COPYRIGHT
 else:
     from version import COPYRIGHT
 
-
-# Tab IDs in display order — must match the TabPane ids in main.py.
-TAB_IDS = [
-    "files",
-    "console",
-    "tools",
-    "git",
-    "github",
-    "cmake",
-    "workflow",
-    "serial",
-    "probe",
-    "lldb",
-    "venv",
-    "settings",
-    "theme",
-    "about",
-    "help",
-]
 
 DEFAULT_SCREENSHOT_DIR = Path(__file__).parents[1] / "doc" / "screenshots"
 
@@ -56,6 +37,24 @@ _OSS_TABLE = (
 )
 
 
+def enabled_tab_ids(tabs: TabbedContent) -> list[str]:
+    """Return mounted, enabled tab pane IDs in display order."""
+    tab_ids: list[str] = []
+    for pane in tabs.query(TabPane):
+        if not pane.id or getattr(pane, "disabled", False):
+            continue
+        try:
+            tab = tabs.get_tab(pane.id)
+        except Exception:
+            continue
+        if getattr(tab, "disabled", False):
+            continue
+        if not getattr(tab, "display", True) or not getattr(tab, "visible", True):
+            continue
+        tab_ids.append(pane.id)
+    return tab_ids
+
+
 async def capture_screenshots(
     app: App,
     output_dir: Path,
@@ -72,7 +71,8 @@ async def capture_screenshots(
     saved: list[str] = []
     failed: list[str] = []
 
-    for tab_id in TAB_IDS:
+    tab_ids = enabled_tab_ids(tabs)
+    for tab_id in tab_ids:
         if callable(on_progress):
             on_progress(tab_id)
         try:
@@ -85,7 +85,8 @@ async def capture_screenshots(
         except Exception as exc:
             failed.append(f"{tab_id} ({exc})")
 
-    tabs.active = "about"
+    if "about" in tab_ids:
+        tabs.active = "about"
     return saved, failed
 
 
