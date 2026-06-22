@@ -16,6 +16,7 @@
 | [Probe](tabs/probe.md) | Debug probe control and GDB server |
 | [LLDB](tabs/lldb.md) | LLDB dashboard (registers, assembly, stack, backtrace) |
 | [Venv](tabs/venv.md) | PDM virtual environment manager |
+| [Plugins](tabs/plugins.md) | Plugin installation and management |
 | [Settings](tabs/settings.md) | Unified configuration |
 | [Theme](tabs/theme.md) | LLDB dashboard color scheme |
 | [About](tabs/about.md) | App info and screenshot capture |

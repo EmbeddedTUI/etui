@@ -1,5 +1,5 @@
-from textual.widget import Widget
 from etui.plugin import EtuiTabPlugin, TabSpec
+from etui.tabs.venv import VenvTab
 
 class VenvTabPlugin(EtuiTabPlugin):
     def spec(self) -> TabSpec:
@@ -9,6 +9,5 @@ class VenvTabPlugin(EtuiTabPlugin):
             order=200,
         )
 
-    def create_widget(self) -> Widget:
-        from .tab import VenvTab
+    def create_widget(self):
         return VenvTab()

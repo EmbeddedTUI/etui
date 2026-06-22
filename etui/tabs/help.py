@@ -33,6 +33,7 @@ _MENU: list[tuple[str, str, bool]] = [
     ("  Probe", "tabs/probe.md", True),
     ("  LLDB", "tabs/lldb.md", True),
     ("  Venv", "tabs/venv.md", True),
+    ("  Plugins", "tabs/plugins.md", True),
     ("  Settings", "tabs/settings.md", True),
     ("  Theme", "tabs/theme.md", True),
     ("  About", "tabs/about.md", True),

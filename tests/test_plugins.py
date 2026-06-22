@@ -169,6 +169,27 @@ class PluginDiscoveryTests(unittest.TestCase):
         self.assertIn("duplicate tab id", errors_dict["good2"])
 
     @patch("etui.plugins._entry_points")
+    def test_discover_skips_core_plugin_entry_points(self, mock_eps: MagicMock) -> None:
+        class CoreVenvPlugin(GoodPlugin):
+            def spec(self) -> TabSpec:
+                return TabSpec(id="plugin-venv", title="Venv", order=200)
+
+        class CoreManagerPlugin(AuthorizedProvidesPlugin):
+            def spec(self) -> TabSpec:
+                return TabSpec(id="plugin-manager", title="Plugins", order=950)
+
+        mock_eps.return_value = [
+            MockEntryPoint("venv", CoreVenvPlugin, MockDist("etui-venv", "0.1.0")),
+            MockEntryPoint("manager", CoreManagerPlugin, MockDist("etui-plugin-manager", "0.1.0")),
+        ]
+
+        pm = PluginManager()
+        pm.discover()
+
+        self.assertEqual(len(pm.loaded), 0)
+        self.assertEqual(len(pm.errors), 0)
+
+    @patch("etui.plugins._entry_points")
     def test_discover_skips_unauthorized_provides_plugin(self, mock_eps: MagicMock) -> None:
         mock_eps.return_value = [
             MockEntryPoint("bad_provides", UnauthorizedProvidesPlugin),
@@ -1026,7 +1047,7 @@ class GlobalGateTests(unittest.TestCase):
             tree = ast.parse(f.read(), filename=str(main_path))
             
         # The forbidden domain tab names
-        forbidden_tab_classes = {"ProbeTab", "LldbTab", "GitTab", "GitHubTab", "CMakeTab", "WorkflowTab", "SerialTab", "VenvTab", "ToolsTab"}
+        forbidden_tab_classes = {"ProbeTab", "LldbTab", "GitTab", "GitHubTab", "CMakeTab", "WorkflowTab", "SerialTab", "ToolsTab"}
         
         # Walk AST to find imports or query_one with the forbidden names
         for node in ast.walk(tree):

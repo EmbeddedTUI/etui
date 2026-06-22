@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 from packaging.requirements import InvalidRequirement
 from textual.app import App, ComposeResult
 
-from etui_venv.tab import VenvTab
+from etui.tabs.venv import VenvTab
 
 
 class VenvTestApp(App):
@@ -68,7 +68,7 @@ class VenvTabWidgetTests(unittest.IsolatedAsyncioTestCase):
             (project_path / "pyproject.toml").write_text("[project]\nname='sample'\n")
             project_info = {
                 "python": {
-                    "interpreter": str(project_path / ".venv/bin/python"),
+                    "interpreter": str(project_path / "venv/bin/python"),
                     "version": "3.13",
                 },
                 "project": {"root": str(project_path)},

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, AsyncMock
 
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Label, Button, Input
-from etui_plugin_manager.tab import PluginManagerTab
+from etui.tabs.plugin_manager import PluginManagerTab
 from etui.bus import MessageBus
 from etui.bus_contract import PluginsChanged, TOPIC_PLUGINS_CHANGED
 

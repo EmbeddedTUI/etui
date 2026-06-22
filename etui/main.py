@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("etui.main")
-CORE_TAB_IDS = {"files", "console", "settings", "theme", "about", "help"}
+CORE_TAB_IDS = {"files", "console", "settings", "theme", "about", "help", "plugin-venv", "plugin-manager"}
 
 if __package__:
     from .version import COPYRIGHT  # noqa: F401 — re-exported for callers
@@ -27,6 +27,8 @@ if __package__:
     from .tabs.about import AboutTab
     from .tabs.console import ConsoleTab
     from .tabs.files import FilesTab
+    from .tabs.venv import VenvTab
+    from .tabs.plugin_manager import PluginManagerTab
     from .tabs.theme import ThemeTab
     from .tabs.settings import SettingsTab
     from .settings import SettingsManager
@@ -67,6 +69,8 @@ else:
     from tabs.about import AboutTab
     from tabs.console import ConsoleTab
     from tabs.files import FilesTab
+    from tabs.venv import VenvTab
+    from tabs.plugin_manager import PluginManagerTab
     from tabs.theme import ThemeTab
     from tabs.settings import SettingsTab
     from settings import SettingsManager
@@ -367,6 +371,10 @@ class EtuiApp(App):
                 yield ConsoleTab()
             with TabPane("Settings", id="settings"):
                 yield SettingsTab()
+            with TabPane("Venv", id="plugin-venv"):
+                yield VenvTab()
+            with TabPane("Plugins", id="plugin-manager"):
+                yield PluginManagerTab()
             with TabPane("Theme", id="theme"):
                 yield ThemeTab(
                     self.settings_manager.get("lldb", "theme", "vibrant")
@@ -821,6 +829,8 @@ class EtuiApp(App):
             {"id": "files", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "Workspace file explorer and editor", "errors": None},
             {"id": "console", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "Interactive command terminal", "errors": None},
             {"id": "settings", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "Application configuration", "errors": None},
+            {"id": "plugin-venv", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "PDM project environment manager", "errors": None},
+            {"id": "plugin-manager", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "Plugin installation and management", "errors": None},
             {"id": "theme", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "UI theme selector", "errors": None},
             {"id": "about", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "About EmbeddedTUI", "errors": None},
             {"id": "help", "dist": "etui", "version": ver, "source": "core", "enabled": True, "status": "loaded", "summary": "Help and documentation browser", "errors": None},
@@ -870,11 +880,16 @@ class EtuiApp(App):
             is_enabled = f"plugin-{name}" not in disabled_set
             
             if __package__:
-                from .plugins import FIRST_PARTY_PLUGINS
+                from .plugins import CORE_PLUGIN_DIST_NAMES, FIRST_PARTY_PLUGINS
             else:
-                from plugins import FIRST_PARTY_PLUGINS
+                from plugins import CORE_PLUGIN_DIST_NAMES, FIRST_PARTY_PLUGINS
                 
-            source = "default" if f"etui-{name}" in FIRST_PARTY_PLUGINS or name in FIRST_PARTY_PLUGINS else "third-party"
+            if f"etui-{name}" in CORE_PLUGIN_DIST_NAMES or name in CORE_PLUGIN_DIST_NAMES:
+                source = "core"
+            elif f"etui-{name}" in FIRST_PARTY_PLUGINS or name in FIRST_PARTY_PLUGINS:
+                source = "default"
+            else:
+                source = "third-party"
             
             plugin_dicts.append({
                 "id": f"plugin-{name}",
@@ -1153,7 +1168,7 @@ class EtuiApp(App):
         tabs = self.query_one(TabbedContent)
         mounted_ids = set()
         for pane in list(tabs.children):
-            if pane.id and pane.id.startswith("plugin-") and pane.id != "plugin-manager":
+            if pane.id and pane.id.startswith("plugin-") and pane.id not in CORE_TAB_IDS:
                 mounted_ids.add(pane.id)
         old_loaded_by_id = {lp.spec.id: lp for lp in self.plugins.loaded}
 
