@@ -37,7 +37,6 @@ else:
 log = logging.getLogger("etui.plugins")
 ENTRY_GROUP = "etui.tabs"
 PINNED_PLUGIN_IDS = {"plugin-manager", "plugin-venv"}
-CORE_PLUGIN_DIST_NAMES = {"etui-venv", "etui-plugin-manager"}
 CORE_PLUGIN_IDS = {"plugin-manager", "plugin-venv"}
 # Host-owned service names a plugin may `provide` (beyond its own
 # `plugin.<id>.*` namespace), declared via TabSpec.provides and validated here.
@@ -114,7 +113,6 @@ class ScopedBus:
 
 FIRST_PARTY_PLUGINS = {
     "etui-tools",
-    "etui-venv",
     "etui-cmake",
     "etui-workflow",
     "etui-serial",
@@ -122,7 +120,6 @@ FIRST_PARTY_PLUGINS = {
     "etui-git",
     "etui-probe",
     "etui-lldb",
-    "etui-plugin-manager",
 }
 
 
@@ -192,9 +189,7 @@ class PluginManager:
             if loc:
                 location = str(loc)
         
-        if dist_name in CORE_PLUGIN_DIST_NAMES:
-            source = "core"
-        elif dist_name in FIRST_PARTY_PLUGINS:
+        if dist_name in FIRST_PARTY_PLUGINS:
             source = "default"
         else:
             source = "third-party"

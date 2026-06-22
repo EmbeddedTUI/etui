@@ -878,15 +878,13 @@ class EtuiApp(App):
             if name in loaded_names or name in loaded_ids or name == "host-services":
                 continue
             is_enabled = f"plugin-{name}" not in disabled_set
-            
+
             if __package__:
-                from .plugins import CORE_PLUGIN_DIST_NAMES, FIRST_PARTY_PLUGINS
+                from .plugins import FIRST_PARTY_PLUGINS
             else:
-                from plugins import CORE_PLUGIN_DIST_NAMES, FIRST_PARTY_PLUGINS
-                
-            if f"etui-{name}" in CORE_PLUGIN_DIST_NAMES or name in CORE_PLUGIN_DIST_NAMES:
-                source = "core"
-            elif f"etui-{name}" in FIRST_PARTY_PLUGINS or name in FIRST_PARTY_PLUGINS:
+                from plugins import FIRST_PARTY_PLUGINS
+
+            if f"etui-{name}" in FIRST_PARTY_PLUGINS or name in FIRST_PARTY_PLUGINS:
                 source = "default"
             else:
                 source = "third-party"
