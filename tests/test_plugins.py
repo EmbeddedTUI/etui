@@ -838,6 +838,42 @@ class PluginMountIntegrationTests(unittest.TestCase):
     def test_plugin_install_uninstall_and_degrade(self, mock_which: MagicMock, mock_exec: MagicMock, mock_eps: MagicMock) -> None:
         _run_textual_test(self._test_plugin_install_uninstall_and_degrade(mock_which, mock_exec, mock_eps))
 
+    def test_remove_distribution_from_environment_deletes_recorded_files(self) -> None:
+        from etui.main import EtuiApp
+        import tempfile
+
+        class FakeDist:
+            def __init__(self, root: Path) -> None:
+                self._path = root / "etui_ocr-0.1.0.dist-info"
+                self.files = [
+                    Path("etui_ocr/__init__.py"),
+                    Path("etui_ocr/plugin.py"),
+                    Path("etui_ocr-0.1.0.dist-info/METADATA"),
+                ]
+
+            def locate_file(self, rel: Path) -> Path:
+                return site_packages / rel
+
+            @property
+            def metadata(self):
+                return {"Name": "etui-ocr"}
+
+        with tempfile.TemporaryDirectory() as d:
+            site_packages = Path(d) / "site-packages"
+            pkg_dir = site_packages / "etui_ocr"
+            dist_info = site_packages / "etui_ocr-0.1.0.dist-info"
+            pkg_dir.mkdir(parents=True)
+            dist_info.mkdir(parents=True)
+            (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
+            (pkg_dir / "plugin.py").write_text("", encoding="utf-8")
+            (dist_info / "METADATA").write_text("Name: etui-ocr\n", encoding="utf-8")
+
+            removed = EtuiApp._remove_distribution_from_environment(FakeDist(site_packages))
+
+            self.assertTrue(removed)
+            self.assertFalse(pkg_dir.exists())
+            self.assertFalse(dist_info.exists())
+
     async def _test_plugin_install_uninstall_and_degrade(self, mock_which: MagicMock, mock_exec: MagicMock, mock_eps: MagicMock) -> None:
         from etui.main import EtuiApp
         from etui.settings import SettingsManager
@@ -846,8 +882,21 @@ class PluginMountIntegrationTests(unittest.TestCase):
         import tempfile
         import zipfile
 
-        mock_eps.return_value = []
         mock_which.return_value = "/mock/bin/pdm"
+
+        class MockInstalledPlugin(EtuiTabPlugin):
+            def spec(self) -> TabSpec:
+                return TabSpec(id="plugin-somepkg", title="Some Plugin", order=100)
+
+            def create_widget(self) -> Widget:
+                return Widget()
+
+        def entry_points_side_effect() -> list[MockEntryPoint]:
+            if not (Path(d) / "etui_somepkg").exists():
+                return []
+            return [MockEntryPoint("somepkg", MockInstalledPlugin, MockDist("etui-somepkg", "0.1.0"))]
+
+        mock_eps.side_effect = entry_points_side_effect
 
         # Mock PDM process success
         from unittest.mock import AsyncMock
@@ -966,6 +1015,11 @@ class PluginMountIntegrationTests(unittest.TestCase):
                 # Verify target folder moved
                 self.assertTrue((Path(d) / "etui_somepkg").is_dir())
                 self.assertTrue((Path(d) / "etui_somepkg" / "etui_somepkg" / "__init__.py").is_file())
+
+                # Ensure the plugin is present before uninstall so reloads reflect the environment.
+                await app.bus.call("plugins.reload")
+                plugin_ids = [item["id"] for item in await app.bus.call("plugins.list")]
+                self.assertIn("plugin-somepkg", plugin_ids)
 
                 # 3. Test PDM build artifact resolution from a project directory
                 project_dir = Path(d) / "project"

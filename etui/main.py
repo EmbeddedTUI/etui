@@ -628,6 +628,55 @@ class EtuiApp(App):
         return normalize_dist_name(spec)
 
     @staticmethod
+    def _installed_distribution(name: str):
+        import importlib.metadata as md
+
+        if __package__:
+            from .plugins import normalize_dist_name
+        else:
+            from plugins import normalize_dist_name
+
+        target = normalize_dist_name(name)
+        for dist in md.distributions():
+            if normalize_dist_name(dist.metadata.get("Name", "")) == target:
+                return dist
+        return None
+
+    @staticmethod
+    def _remove_distribution_from_environment(dist) -> bool:
+        import shutil
+
+        removed = False
+        dist_path = getattr(dist, "_path", None)
+
+        roots: set[Path] = set()
+        for file in dist.files or []:
+            rel = Path(str(file))
+            if not rel.parts:
+                continue
+            top_level = rel.parts[0]
+            if top_level.endswith(".dist-info"):
+                continue
+            roots.add(Path(top_level))
+
+        for root in sorted(roots):
+            path = Path(dist.locate_file(root))
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+                removed = True
+            elif path.exists():
+                path.unlink()
+                removed = True
+
+        if dist_path is not None:
+            dist_dir = Path(dist_path)
+            if dist_dir.exists():
+                shutil.rmtree(dist_dir, ignore_errors=True)
+                removed = True
+
+        return removed
+
+    @staticmethod
     def _copy_distribution_files(src_root: Path, target_root: Path, dist_name: str) -> None:
         import shutil
         if __package__:
@@ -1092,10 +1141,22 @@ class EtuiApp(App):
         if not approved:
             raise PermissionError("Uninstall cancelled by user.")
 
+        import importlib
+        import shutil
+
         user_plugin_dir = self.get_user_plugin_dir()
         target_dir = (user_plugin_dir / normalized_dist).resolve()
         if not target_dir.is_relative_to(user_plugin_dir.resolve()):
             raise ValueError("Plugin uninstall target escapes the managed plugin directory.")
+        self._emit_plugin_install_progress(dist, f"Removing cached install: {target_dir}")
+
+        target_name = lp.dist_name if lp and lp.dist_name else normalized_dist
+        installed_dist = self._installed_distribution(target_name)
+        if installed_dist is not None:
+            installed_name = installed_dist.metadata.get("Name", normalized_dist)
+            self._emit_plugin_install_progress(dist, f"Removing installed distribution: {installed_name}")
+            self._remove_distribution_from_environment(installed_dist)
+
         if lp is not None:
             try:
                 await self._hot_unmount_plugin_tab(lp.spec.id, {lp.spec.id: lp})
@@ -1111,8 +1172,14 @@ class EtuiApp(App):
             path_str = str(target_dir)
             if path_str in sys.path:
                 sys.path.remove(path_str)
+            if hasattr(importlib.metadata, "invalidate_caches"):
+                importlib.metadata.invalidate_caches()
+            importlib.invalidate_caches()
             self._emit_plugins_changed(removed=[normalized_dist])
         elif lp is not None:
+            if hasattr(importlib.metadata, "invalidate_caches"):
+                importlib.metadata.invalidate_caches()
+            importlib.invalidate_caches()
             self._emit_plugins_changed(removed=[normalized_dist])
 
     async def _svc_plugins_set_enabled(
