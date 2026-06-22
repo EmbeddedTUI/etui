@@ -115,10 +115,11 @@ class CommandMessage(Message):
 class EtuiApp(App):
     """ Embedded TUI App"""
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, startup_workspace_root: str | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.settings_manager = SettingsManager()
         self._last_active_tab = "files"
+        self.startup_workspace_root = startup_workspace_root
         self.workspace_root = self.load_workspace_root()
         self.bus = MessageBus()
         # App-owned services that don't belong to any single tab.
@@ -259,17 +260,21 @@ class EtuiApp(App):
         wrap = bool(self.settings_manager.get("ui", "word_wrap", False))
         for log in self.query(RichLog):
             log.wrap = wrap
-        # Always start from the process CWD; offer to restore the previously
-        # saved workspace root if it still exists and differs from CWD.
+        # Start from the explicit CLI workspace if provided, otherwise from
+        # the process CWD. Only offer restore when startup was implicit.
         saved = self.workspace_root
-        cwd = str(Path.cwd())
-        await self.set_workspace_root(cwd, update_files=False, persist=False)
-        if saved and Path(saved).is_dir() and saved != cwd:
+        startup_root = self.startup_workspace_root or str(Path.cwd())
+        await self.set_workspace_root(startup_root, update_files=True, persist=False)
+        if (
+            self.startup_workspace_root is None
+            and saved
+            and Path(saved).is_dir()
+            and saved != startup_root
+        ):
             self.notify(
                 f"Previous workspace: {saved}",
                 title="Restore workspace?",
                 timeout=12,
-                action="restore_workspace",
             )
 
     async def _mount_plugin_tabs(self) -> None:
@@ -1394,28 +1399,57 @@ def _setup_debug_logging() -> Path:
     return log_path
 
 
-def main():
-    if "--debug" in sys.argv:
-        sys.argv = [a for a in sys.argv if a != "--debug"]
+def _resolve_workspace_arg(raw_path: str) -> str:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
+    if not path.is_dir():
+        raise SystemExit(f"etui: workspace path is not a directory: {path}")
+    return str(path)
+
+
+def _parse_main_args(argv: list[str]) -> tuple[bool, str | None]:
+    args = list(argv)
+    debug = False
+    if "--debug" in args:
+        args = [arg for arg in args if arg != "--debug"]
+        debug = True
+
+    if args and args[0].startswith("-"):
+        raise SystemExit(f"etui: unknown option: {args[0]}")
+    if len(args) > 1:
+        raise SystemExit("usage: etui [--debug] [WORKSPACE]")
+
+    workspace_root = _resolve_workspace_arg(args[0]) if args else None
+    return debug, workspace_root
+
+
+def main(argv: list[str] | None = None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--debug" in args:
+        args = [a for a in args if a != "--debug"]
         path = _setup_debug_logging()
         print(f"[etui] debug logging -> {path}")
 
-    if len(sys.argv) >= 3 and sys.argv[1] == "--etui-xonsh-command":
+    if len(args) >= 2 and args[0] == "--etui-xonsh-command":
         from xonsh.main import main as xonsh_main
 
-        xonsh_main(["--no-rc", "-c", sys.argv[2]])
+        xonsh_main(["--no-rc", "-c", args[1]])
         return
 
-    if len(sys.argv) >= 2 and sys.argv[1] == "--screenshots":
-        _run_screenshots(Path(sys.argv[2]) if len(sys.argv) >= 3 else None)
+    if len(args) >= 1 and args[0] == "--screenshots":
+        _run_screenshots(Path(args[1]) if len(args) >= 2 else None)
         return
 
-    if len(sys.argv) >= 2 and sys.argv[1] == "--self-test":
+    if len(args) >= 1 and args[0] == "--self-test":
         _run_self_test()
         return
 
+    _, startup_workspace_root = _parse_main_args(args)
+
     print("Hello from etui!")
-    app = EtuiApp()
+    app = EtuiApp(startup_workspace_root=startup_workspace_root)
     app.run()
 
 

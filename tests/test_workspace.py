@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 from textual.widgets import Input
 
 from etui.bus_contract import SVC_WORKSPACE_GET_ROOT, SVC_WORKSPACE_SET_ROOT
-from etui.main import EtuiApp
+from etui.main import EtuiApp, _parse_main_args
 from etui.tabs.files import FilesTab
 from etui.tabs.console import ConsoleTab
 
@@ -56,6 +56,14 @@ class WorkspaceRootTests(unittest.TestCase):
         from etui.settings import SettingsManager
         with patch("etui.plugins._entry_points", return_value=[]):
             app = EtuiApp()
+            app.settings_manager = SettingsManager(path=self.settings_path)
+            app.workspace_root = app.load_workspace_root()
+            return app
+
+    def _make_app_with_startup_root(self, startup_workspace_root: str) -> "EtuiApp":
+        from etui.settings import SettingsManager
+        with patch("etui.plugins._entry_points", return_value=[]):
+            app = EtuiApp(startup_workspace_root=startup_workspace_root)
             app.settings_manager = SettingsManager(path=self.settings_path)
             app.workspace_root = app.load_workspace_root()
             return app
@@ -120,6 +128,65 @@ class WorkspaceRootTests(unittest.TestCase):
                     app.settings_manager.get("workspace", "root"),
                     str(self.workspace_root),
                 )
+
+    def test_saved_workspace_notification_uses_supported_kwargs(self) -> None:
+        _run_textual_test(self._test_saved_workspace_notification_uses_supported_kwargs())
+
+    async def _test_saved_workspace_notification_uses_supported_kwargs(self) -> None:
+        saved_workspace = self.tmp_dir / "saved_project"
+        saved_workspace.mkdir()
+        app = self._make_app()
+        app.settings_manager.set("workspace", "root", str(saved_workspace))
+        app.workspace_root = app.load_workspace_root()
+
+        with self._suppress_workspace_workers():
+            with patch.object(app, "notify") as mock_notify:
+                async with app.run_test():
+                    pass
+
+        restore_notice = next(
+            call for call in mock_notify.call_args_list
+            if call.kwargs.get("title") == "Restore workspace?"
+        )
+        self.assertNotIn("action", restore_notice.kwargs)
+
+    def test_cli_workspace_arg_resolves_relative_path(self) -> None:
+        with patch("etui.main.Path.cwd", return_value=self.tmp_dir):
+            _, workspace_root = _parse_main_args(["my_project"])
+
+        self.assertEqual(workspace_root, str(self.workspace_root.resolve()))
+
+    def test_startup_workspace_arg_wins_over_saved_workspace(self) -> None:
+        _run_textual_test(self._test_startup_workspace_arg_wins_over_saved_workspace())
+
+    async def _test_startup_workspace_arg_wins_over_saved_workspace(self) -> None:
+        saved_workspace = self.tmp_dir / "saved_project"
+        saved_workspace.mkdir()
+        cli_workspace = self.tmp_dir / "cli_project"
+        cli_workspace.mkdir()
+
+        app = self._make_app_with_startup_root(str(cli_workspace))
+        app.settings_manager.set("workspace", "root", str(saved_workspace))
+        app.workspace_root = app.load_workspace_root()
+
+        with patch.object(app, "notify") as mock_notify:
+            async with app.run_test():
+                self.assertEqual(app.workspace_root, str(cli_workspace))
+                self.assertEqual(
+                    await app.bus.call(SVC_WORKSPACE_GET_ROOT),
+                    str(cli_workspace),
+                )
+                files_tab = app.query_one(FilesTab)
+                self.assertEqual(
+                    files_tab.query_one("#txt-workspace-root", Input).value,
+                    str(cli_workspace),
+                )
+
+        restore_notices = [
+            call for call in mock_notify.call_args_list
+            if call.kwargs.get("title") == "Restore workspace?"
+        ]
+        self.assertEqual(restore_notices, [])
 
     def test_empty_input_falls_back_to_tree_path(self) -> None:
         _run_textual_test(self._test_empty_input_falls_back_to_tree_path())
