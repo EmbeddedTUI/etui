@@ -71,6 +71,7 @@ PRETTY_TITLES = {
     "probe": "Probe / Debugger Settings",
     "lldb": "LLDB Dashboard Settings",
     "tools": "Tool Search Settings",
+    "ocr": "OCR Settings",
     "ui": "UI Settings",
 }
 
