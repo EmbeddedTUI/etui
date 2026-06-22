@@ -9,5 +9,7 @@ The **Plugins** tab allows you to manage EmbeddedTUI plugins at runtime.
 - **Uninstallation**: Uninstall user-added third-party plugins safely.
 - **Configuration**: Directly configure plugin settings schemas.
 
+Installed third-party plugins are cached under `~/.local/share/etui/plugins` by default. etui loads plugins from that cache on startup, so a successful install remains available after restart even when the source package is not in the active project environment.
+
 ## Important Security Note:
 Installing a plugin executes arbitrary Python code in the same process context as the TUI itself. Install only plugins from trusted sources.
