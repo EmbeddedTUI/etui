@@ -159,7 +159,7 @@ class RenameModal(ModalScreen):
     def on_mount(self) -> None:
         inp = self.query_one("#rename-input", Input)
         inp.focus()
-        inp.action_cursor_line_end()
+        inp.cursor_position = len(inp.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -217,7 +217,7 @@ class CopyModal(ModalScreen):
     def on_mount(self) -> None:
         inp = self.query_one("#copy-dest", Input)
         inp.focus()
-        inp.action_cursor_line_end()
+        inp.cursor_position = len(inp.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -273,7 +273,7 @@ class MoveModal(ModalScreen):
     def on_mount(self) -> None:
         inp = self.query_one("#move-dest", Input)
         inp.focus()
-        inp.action_cursor_line_end()
+        inp.cursor_position = len(inp.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -330,7 +330,7 @@ class PermissionsModal(ModalScreen):
     def on_mount(self) -> None:
         inp = self.query_one("#perm-input", Input)
         inp.focus()
-        inp.action_cursor_line_end()
+        inp.cursor_position = len(inp.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
