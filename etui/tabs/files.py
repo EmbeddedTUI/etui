@@ -17,10 +17,10 @@ from textual.screen import ModalScreen
 
 try:
     from ..bus import BusMixin
-    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME
+    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME, SVC_FILES_COPY
 except ImportError:
     from etui.bus import BusMixin
-    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME
+    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME, SVC_FILES_COPY
 
 _MD_SUFFIXES = {".md", ".markdown"}
 
@@ -180,6 +180,62 @@ class RenameModal(ModalScreen):
             self.dismiss(None)
 
 
+class CopyModal(ModalScreen):
+    """Modal dialog that collects a destination path for a copy operation."""
+
+    DEFAULT_CSS = """
+    CopyModal { align: center middle; }
+    #copy-modal-box {
+        background: $surface;
+        padding: 1 2;
+        border: thick $accent;
+        width: 70;
+        height: auto;
+    }
+    #copy-modal-box Label { margin-bottom: 1; }
+    #copy-modal-box Input { margin-bottom: 1; }
+    #copy-modal-btns { height: 3; align: right middle; }
+    #copy-modal-btns Button { margin-left: 1; }
+    """
+
+    def __init__(self, src: Path) -> None:
+        super().__init__()
+        self._src = src
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="copy-modal-box"):
+            yield Label(f"Copy: {self._src.name}")
+            yield Input(
+                value=str(self._src.parent / (self._src.stem + "_copy" + self._src.suffix)),
+                placeholder="destination path",
+                id="copy-dest",
+            )
+            with Horizontal(id="copy-modal-btns"):
+                yield Button("Cancel", id="copy-cancel")
+                yield Button("Copy", id="copy-ok", variant="success")
+
+    def on_mount(self) -> None:
+        inp = self.query_one("#copy-dest", Input)
+        inp.focus()
+        inp.action_cursor_line_end()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "copy-cancel":
+            self.dismiss(None)
+        elif event.button.id == "copy-ok":
+            self._submit()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()
+
+    def _submit(self) -> None:
+        dest = self.query_one("#copy-dest", Input).value.strip()
+        if dest:
+            self.dismiss(dest)
+
+
 class LeftWidget(DirectoryTree):
     def __init__(self):
         super().__init__("./")
@@ -192,6 +248,7 @@ class FileViewer(Vertical):
             yield Button("Details", id="btn-details")
             yield Button("Create", id="btn-create", variant="success")
             yield Button("Rename", id="btn-rename")
+            yield Button("Copy", id="btn-copy")
             yield Button("Delete", id="btn-delete", variant="error")
         with ScrollableContainer(id="file-scroll"):
             yield Static(id="file-display", expand=True)
@@ -277,6 +334,7 @@ class FilesTab(BusMixin, Vertical):
                 self.bus.provide(SVC_FILES_DELETE, self._svc_delete),
                 self.bus.provide(SVC_FILES_CREATE, self._svc_create),
                 self.bus.provide(SVC_FILES_RENAME, self._svc_rename),
+                self.bus.provide(SVC_FILES_COPY, self._svc_copy),
             ]
 
     def on_unmount(self) -> None:
@@ -294,6 +352,9 @@ class FilesTab(BusMixin, Vertical):
 
     def _svc_rename(self, path: str, new_name: str) -> None:
         self.rename_path(Path(path), new_name)
+
+    def _svc_copy(self, src: str, dest: str) -> None:
+        self.copy_path(Path(src), Path(dest))
 
     def _apply_workspace_root(self, root: str) -> None:
         self.query_one("LeftWidget").path = Path(root)
@@ -321,6 +382,9 @@ class FilesTab(BusMixin, Vertical):
         elif event.button.id == "btn-rename":
             if self.current_path:
                 self.run_worker(self._show_rename_dialog(self.current_path))
+        elif event.button.id == "btn-copy":
+            if self.current_path:
+                self.run_worker(self._show_copy_dialog(self.current_path))
         elif event.button.id == "btn-delete":
             if self.current_path:
                 self.run_worker(self._confirm_and_delete(self.current_path))
@@ -430,6 +494,35 @@ class FilesTab(BusMixin, Vertical):
             self.current_path = dest
         self.query_one("LeftWidget", DirectoryTree).reload()
         self.app.notify(f"Renamed to: {new_name}")
+        if dest.is_file():
+            self.open_file(dest)
+
+    async def _show_copy_dialog(self, src: Path) -> None:
+        dest_str = await self.app.push_screen_wait(CopyModal(src))
+        if dest_str:
+            self.copy_path(src, Path(dest_str))
+
+    def copy_path(self, src: Path, dest: Path) -> None:
+        """Copy *src* (file or directory tree) to *dest* and refresh the tree."""
+        src = src.expanduser().resolve()
+        dest = dest.expanduser().resolve()
+        if not src.exists():
+            self.app.notify(f"Source not found: {src.name}", severity="error")
+            return
+        if dest.exists():
+            self.app.notify(f"Destination already exists: {dest.name}", severity="warning")
+            return
+        try:
+            if src.is_dir():
+                shutil.copytree(src, dest)
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
+        except OSError as exc:
+            self.app.notify(f"Copy failed: {exc}", severity="error")
+            return
+        self.query_one("LeftWidget", DirectoryTree).reload()
+        self.app.notify(f"Copied to: {dest.name}")
         if dest.is_file():
             self.open_file(dest)
 

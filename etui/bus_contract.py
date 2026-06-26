@@ -73,6 +73,8 @@ SVC_FILES_DELETE = "files.delete"
 SVC_FILES_CREATE = "files.create"
 # files.rename(path: str, new_name: str) -> None  (rename a file or directory in place)
 SVC_FILES_RENAME = "files.rename"
+# files.copy(src: str, dest: str) -> None  (copy a file or directory tree to dest)
+SVC_FILES_COPY = "files.copy"
 
 # Event: plugins.changed (TOPIC_PLUGINS_CHANGED)
 TOPIC_PLUGINS_CHANGED = "plugins.changed"
