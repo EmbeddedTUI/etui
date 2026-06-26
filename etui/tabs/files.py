@@ -17,10 +17,10 @@ from textual.screen import ModalScreen
 
 try:
     from ..bus import BusMixin
-    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE
+    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME
 except ImportError:
     from etui.bus import BusMixin
-    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE
+    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME
 
 _MD_SUFFIXES = {".md", ".markdown"}
 
@@ -126,6 +126,60 @@ class SafeMarkdownViewer(MarkdownViewer):
         await super().go(target)
 
 
+class RenameModal(ModalScreen):
+    """Modal dialog that collects a new name for an existing file or directory."""
+
+    DEFAULT_CSS = """
+    RenameModal { align: center middle; }
+    #rename-modal-box {
+        background: $surface;
+        padding: 1 2;
+        border: thick $accent;
+        width: 60;
+        height: auto;
+    }
+    #rename-modal-box Label { margin-bottom: 1; }
+    #rename-modal-box Input { margin-bottom: 1; }
+    #rename-modal-btns { height: 3; align: right middle; }
+    #rename-modal-btns Button { margin-left: 1; }
+    """
+
+    def __init__(self, path: Path) -> None:
+        super().__init__()
+        self._path = path
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rename-modal-box"):
+            yield Label(f"Rename: {self._path.name}")
+            yield Input(value=self._path.name, id="rename-input")
+            with Horizontal(id="rename-modal-btns"):
+                yield Button("Cancel", id="rename-cancel")
+                yield Button("Rename", id="rename-ok", variant="success")
+
+    def on_mount(self) -> None:
+        inp = self.query_one("#rename-input", Input)
+        inp.focus()
+        inp.action_cursor_line_end()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "rename-cancel":
+            self.dismiss(None)
+        elif event.button.id == "rename-ok":
+            self._submit()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()
+
+    def _submit(self) -> None:
+        name = self.query_one("#rename-input", Input).value.strip()
+        if name and name != self._path.name:
+            self.dismiss(name)
+        else:
+            self.dismiss(None)
+
+
 class LeftWidget(DirectoryTree):
     def __init__(self):
         super().__init__("./")
@@ -137,6 +191,7 @@ class FileViewer(Vertical):
             yield Button("Content", id="btn-content", variant="primary")
             yield Button("Details", id="btn-details")
             yield Button("Create", id="btn-create", variant="success")
+            yield Button("Rename", id="btn-rename")
             yield Button("Delete", id="btn-delete", variant="error")
         with ScrollableContainer(id="file-scroll"):
             yield Static(id="file-display", expand=True)
@@ -221,6 +276,7 @@ class FilesTab(BusMixin, Vertical):
                 self.bus.provide(SVC_FILES_SELECT, self._svc_select),
                 self.bus.provide(SVC_FILES_DELETE, self._svc_delete),
                 self.bus.provide(SVC_FILES_CREATE, self._svc_create),
+                self.bus.provide(SVC_FILES_RENAME, self._svc_rename),
             ]
 
     def on_unmount(self) -> None:
@@ -235,6 +291,9 @@ class FilesTab(BusMixin, Vertical):
 
     def _svc_create(self, path: str, *, is_dir: bool = False) -> None:
         self.create_path(Path(path), is_dir=is_dir)
+
+    def _svc_rename(self, path: str, new_name: str) -> None:
+        self.rename_path(Path(path), new_name)
 
     def _apply_workspace_root(self, root: str) -> None:
         self.query_one("LeftWidget").path = Path(root)
@@ -259,6 +318,9 @@ class FilesTab(BusMixin, Vertical):
             self.render_file()
         elif event.button.id == "btn-create":
             self.run_worker(self._show_create_dialog())
+        elif event.button.id == "btn-rename":
+            if self.current_path:
+                self.run_worker(self._show_rename_dialog(self.current_path))
         elif event.button.id == "btn-delete":
             if self.current_path:
                 self.run_worker(self._confirm_and_delete(self.current_path))
@@ -343,6 +405,33 @@ class FilesTab(BusMixin, Vertical):
         self.app.notify(f"Created: {path.name}")
         if not is_dir:
             self.open_file(path)
+
+    async def _show_rename_dialog(self, path: Path) -> None:
+        new_name = await self.app.push_screen_wait(RenameModal(path))
+        if new_name:
+            self.rename_path(path, new_name)
+
+    def rename_path(self, path: Path, new_name: str) -> None:
+        """Rename *path* to *new_name* (sibling in the same directory) and refresh the tree."""
+        path = path.expanduser().resolve()
+        if not path.exists():
+            self.app.notify(f"Path not found: {path.name}", severity="error")
+            return
+        dest = path.parent / new_name
+        if dest.exists():
+            self.app.notify(f"Already exists: {new_name}", severity="warning")
+            return
+        try:
+            path.rename(dest)
+        except OSError as exc:
+            self.app.notify(f"Rename failed: {exc}", severity="error")
+            return
+        if self.current_path and self.current_path.resolve() == path:
+            self.current_path = dest
+        self.query_one("LeftWidget", DirectoryTree).reload()
+        self.app.notify(f"Renamed to: {new_name}")
+        if dest.is_file():
+            self.open_file(dest)
 
     async def _confirm_and_delete(self, path: Path) -> None:
         path = path.expanduser().resolve()

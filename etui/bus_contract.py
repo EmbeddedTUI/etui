@@ -71,6 +71,8 @@ SVC_FILES_SELECT = "files.select"
 SVC_FILES_DELETE = "files.delete"
 # files.create(path: str, *, is_dir: bool = False) -> None  (create a file or directory on disk)
 SVC_FILES_CREATE = "files.create"
+# files.rename(path: str, new_name: str) -> None  (rename a file or directory in place)
+SVC_FILES_RENAME = "files.rename"
 
 # Event: plugins.changed (TOPIC_PLUGINS_CHANGED)
 TOPIC_PLUGINS_CHANGED = "plugins.changed"
