@@ -17,10 +17,10 @@ from textual.screen import ModalScreen
 
 try:
     from ..bus import BusMixin
-    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME, SVC_FILES_COPY
+    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME, SVC_FILES_COPY, SVC_FILES_MOVE
 except ImportError:
     from etui.bus import BusMixin
-    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME, SVC_FILES_COPY
+    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME, SVC_FILES_COPY, SVC_FILES_MOVE
 
 _MD_SUFFIXES = {".md", ".markdown"}
 
@@ -236,6 +236,62 @@ class CopyModal(ModalScreen):
             self.dismiss(dest)
 
 
+class MoveModal(ModalScreen):
+    """Modal dialog that collects a destination path for a move operation."""
+
+    DEFAULT_CSS = """
+    MoveModal { align: center middle; }
+    #move-modal-box {
+        background: $surface;
+        padding: 1 2;
+        border: thick $accent;
+        width: 70;
+        height: auto;
+    }
+    #move-modal-box Label { margin-bottom: 1; }
+    #move-modal-box Input { margin-bottom: 1; }
+    #move-modal-btns { height: 3; align: right middle; }
+    #move-modal-btns Button { margin-left: 1; }
+    """
+
+    def __init__(self, src: Path) -> None:
+        super().__init__()
+        self._src = src
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="move-modal-box"):
+            yield Label(f"Move: {self._src.name}")
+            yield Input(
+                value=str(self._src.parent),
+                placeholder="destination directory or full path",
+                id="move-dest",
+            )
+            with Horizontal(id="move-modal-btns"):
+                yield Button("Cancel", id="move-cancel")
+                yield Button("Move", id="move-ok", variant="success")
+
+    def on_mount(self) -> None:
+        inp = self.query_one("#move-dest", Input)
+        inp.focus()
+        inp.action_cursor_line_end()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "move-cancel":
+            self.dismiss(None)
+        elif event.button.id == "move-ok":
+            self._submit()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()
+
+    def _submit(self) -> None:
+        dest = self.query_one("#move-dest", Input).value.strip()
+        if dest:
+            self.dismiss(dest)
+
+
 class LeftWidget(DirectoryTree):
     def __init__(self):
         super().__init__("./")
@@ -249,6 +305,7 @@ class FileViewer(Vertical):
             yield Button("Create", id="btn-create", variant="success")
             yield Button("Rename", id="btn-rename")
             yield Button("Copy", id="btn-copy")
+            yield Button("Move", id="btn-move")
             yield Button("Delete", id="btn-delete", variant="error")
         with ScrollableContainer(id="file-scroll"):
             yield Static(id="file-display", expand=True)
@@ -335,6 +392,7 @@ class FilesTab(BusMixin, Vertical):
                 self.bus.provide(SVC_FILES_CREATE, self._svc_create),
                 self.bus.provide(SVC_FILES_RENAME, self._svc_rename),
                 self.bus.provide(SVC_FILES_COPY, self._svc_copy),
+                self.bus.provide(SVC_FILES_MOVE, self._svc_move),
             ]
 
     def on_unmount(self) -> None:
@@ -355,6 +413,9 @@ class FilesTab(BusMixin, Vertical):
 
     def _svc_copy(self, src: str, dest: str) -> None:
         self.copy_path(Path(src), Path(dest))
+
+    def _svc_move(self, src: str, dest: str) -> None:
+        self.move_path(Path(src), Path(dest))
 
     def _apply_workspace_root(self, root: str) -> None:
         self.query_one("LeftWidget").path = Path(root)
@@ -385,6 +446,9 @@ class FilesTab(BusMixin, Vertical):
         elif event.button.id == "btn-copy":
             if self.current_path:
                 self.run_worker(self._show_copy_dialog(self.current_path))
+        elif event.button.id == "btn-move":
+            if self.current_path:
+                self.run_worker(self._show_move_dialog(self.current_path))
         elif event.button.id == "btn-delete":
             if self.current_path:
                 self.run_worker(self._confirm_and_delete(self.current_path))
@@ -523,6 +587,40 @@ class FilesTab(BusMixin, Vertical):
             return
         self.query_one("LeftWidget", DirectoryTree).reload()
         self.app.notify(f"Copied to: {dest.name}")
+        if dest.is_file():
+            self.open_file(dest)
+
+    async def _show_move_dialog(self, src: Path) -> None:
+        dest_str = await self.app.push_screen_wait(MoveModal(src))
+        if dest_str:
+            self.move_path(src, Path(dest_str))
+
+    def move_path(self, src: Path, dest: Path) -> None:
+        """Move *src* to *dest* and refresh the tree.
+
+        If *dest* is an existing directory, *src* is moved inside it (matching
+        shell ``mv`` semantics).  Otherwise *dest* is the full target path.
+        """
+        src = src.expanduser().resolve()
+        dest = dest.expanduser().resolve()
+        if not src.exists():
+            self.app.notify(f"Source not found: {src.name}", severity="error")
+            return
+        if dest.is_dir():
+            dest = dest / src.name
+        if dest.exists():
+            self.app.notify(f"Destination already exists: {dest.name}", severity="warning")
+            return
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+        except OSError as exc:
+            self.app.notify(f"Move failed: {exc}", severity="error")
+            return
+        if self.current_path and self.current_path.resolve() == src:
+            self.current_path = dest
+        self.query_one("LeftWidget", DirectoryTree).reload()
+        self.app.notify(f"Moved to: {dest.name}")
         if dest.is_file():
             self.open_file(dest)
 
