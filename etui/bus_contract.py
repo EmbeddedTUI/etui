@@ -69,6 +69,8 @@ SVC_SETTINGS_FOCUS_SECTION = "settings.focus_section"
 SVC_FILES_SELECT = "files.select"
 # files.delete(path: str) -> None  (delete a file or directory from disk)
 SVC_FILES_DELETE = "files.delete"
+# files.create(path: str, *, is_dir: bool = False) -> None  (create a file or directory on disk)
+SVC_FILES_CREATE = "files.create"
 
 # Event: plugins.changed (TOPIC_PLUGINS_CHANGED)
 TOPIC_PLUGINS_CHANGED = "plugins.changed"

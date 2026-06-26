@@ -13,15 +13,79 @@ from textual.widgets import DirectoryTree, Button, Input, Label
 from textual.widgets import Static
 from rich.syntax import Syntax
 from textual.widgets import Markdown, MarkdownViewer
+from textual.screen import ModalScreen
 
 try:
     from ..bus import BusMixin
-    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE
+    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE
 except ImportError:
     from etui.bus import BusMixin
-    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE
+    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE
 
 _MD_SUFFIXES = {".md", ".markdown"}
+
+
+class CreateModal(ModalScreen):
+    """Modal dialog that collects a name and kind (file / directory) for creation."""
+
+    DEFAULT_CSS = """
+    CreateModal { align: center middle; }
+    #create-modal-box {
+        background: $surface;
+        padding: 1 2;
+        border: thick $accent;
+        width: 60;
+        height: auto;
+    }
+    #create-modal-box Label { margin-bottom: 1; }
+    #create-modal-box Input { margin-bottom: 1; }
+    #create-modal-kind { height: 3; margin-bottom: 1; }
+    #create-modal-btns { height: 3; align: right middle; }
+    #create-modal-btns Button { margin-left: 1; }
+    """
+
+    def __init__(self, parent_dir: Path) -> None:
+        super().__init__()
+        self._parent_dir = parent_dir
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="create-modal-box"):
+            yield Label(f"Create in: {self._parent_dir}")
+            yield Input(placeholder="name (e.g. file.txt or subdir)", id="create-name")
+            with Horizontal(id="create-modal-kind"):
+                yield Button("File", id="kind-file", variant="primary")
+                yield Button("Directory", id="kind-dir")
+            with Horizontal(id="create-modal-btns"):
+                yield Button("Cancel", id="create-cancel")
+                yield Button("Create", id="create-ok", variant="success")
+
+    def on_mount(self) -> None:
+        self.query_one("#create-name", Input).focus()
+        self._is_dir = False
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "kind-file":
+            self._is_dir = False
+            self.query_one("#kind-file", Button).variant = "primary"
+            self.query_one("#kind-dir", Button).variant = "default"
+        elif event.button.id == "kind-dir":
+            self._is_dir = True
+            self.query_one("#kind-file", Button).variant = "default"
+            self.query_one("#kind-dir", Button).variant = "primary"
+        elif event.button.id == "create-cancel":
+            self.dismiss(None)
+        elif event.button.id == "create-ok":
+            self._submit()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()
+
+    def _submit(self) -> None:
+        name = self.query_one("#create-name", Input).value.strip()
+        if name:
+            self.dismiss((name, self._is_dir))
 
 
 class SafeMarkdownViewer(MarkdownViewer):
@@ -72,6 +136,7 @@ class FileViewer(Vertical):
         with Horizontal(id="viewer-controls"):
             yield Button("Content", id="btn-content", variant="primary")
             yield Button("Details", id="btn-details")
+            yield Button("Create", id="btn-create", variant="success")
             yield Button("Delete", id="btn-delete", variant="error")
         with ScrollableContainer(id="file-scroll"):
             yield Static(id="file-display", expand=True)
@@ -155,6 +220,7 @@ class FilesTab(BusMixin, Vertical):
             self._disposers = [
                 self.bus.provide(SVC_FILES_SELECT, self._svc_select),
                 self.bus.provide(SVC_FILES_DELETE, self._svc_delete),
+                self.bus.provide(SVC_FILES_CREATE, self._svc_create),
             ]
 
     def on_unmount(self) -> None:
@@ -166,6 +232,9 @@ class FilesTab(BusMixin, Vertical):
 
     def _svc_delete(self, path: str) -> None:
         self.run_worker(self._confirm_and_delete(Path(path)))
+
+    def _svc_create(self, path: str, *, is_dir: bool = False) -> None:
+        self.create_path(Path(path), is_dir=is_dir)
 
     def _apply_workspace_root(self, root: str) -> None:
         self.query_one("LeftWidget").path = Path(root)
@@ -188,6 +257,8 @@ class FilesTab(BusMixin, Vertical):
         elif event.button.id == "btn-details":
             self.view_mode = "details"
             self.render_file()
+        elif event.button.id == "btn-create":
+            self.run_worker(self._show_create_dialog())
         elif event.button.id == "btn-delete":
             if self.current_path:
                 self.run_worker(self._confirm_and_delete(self.current_path))
@@ -239,6 +310,39 @@ class FilesTab(BusMixin, Vertical):
             self._apply_workspace_root(str(path))
         else:
             self.app.notify(f"Path not found: {path}", severity="error")
+
+    async def _show_create_dialog(self) -> None:
+        parent_dir = (
+            self.current_path.parent if self.current_path and self.current_path.is_file()
+            else self.current_path
+            if self.current_path and self.current_path.is_dir()
+            else Path(self.query_one("#txt-workspace-root", Input).value.strip() or ".")
+        )
+        parent_dir = parent_dir.expanduser().resolve()
+        result = await self.app.push_screen_wait(CreateModal(parent_dir))
+        if result is not None:
+            name, is_dir = result
+            self.create_path(parent_dir / name, is_dir=is_dir)
+
+    def create_path(self, path: Path, *, is_dir: bool = False) -> None:
+        """Create a file or directory at *path* and refresh the tree."""
+        path = path.expanduser().resolve()
+        if path.exists():
+            self.app.notify(f"Already exists: {path.name}", severity="warning")
+            return
+        try:
+            if is_dir:
+                path.mkdir(parents=True, exist_ok=False)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+        except OSError as exc:
+            self.app.notify(f"Create failed: {exc}", severity="error")
+            return
+        self.query_one("LeftWidget", DirectoryTree).reload()
+        self.app.notify(f"Created: {path.name}")
+        if not is_dir:
+            self.open_file(path)
 
     async def _confirm_and_delete(self, path: Path) -> None:
         path = path.expanduser().resolve()
