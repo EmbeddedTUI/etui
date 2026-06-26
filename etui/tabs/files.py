@@ -731,6 +731,12 @@ class FilesTab(BusMixin, Vertical):
             self.app.notify(f"Path not found: {path.name}", severity="error")
             return
         try:
+            current_mode = os.stat(path).st_mode & 0o777
+        except OSError:
+            current_mode = None
+        if current_mode == mode:
+            return
+        try:
             path.chmod(mode)
         except OSError as exc:
             self.app.notify(f"chmod failed: {exc}", severity="error")
