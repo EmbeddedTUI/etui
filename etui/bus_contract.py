@@ -77,6 +77,8 @@ SVC_FILES_RENAME = "files.rename"
 SVC_FILES_COPY = "files.copy"
 # files.move(src: str, dest: str) -> None  (move a file or directory to dest)
 SVC_FILES_MOVE = "files.move"
+# files.permissions(path: str, mode: int) -> None  (chmod a file or directory; mode is octal int e.g. 0o644)
+SVC_FILES_PERMISSIONS = "files.permissions"
 
 # Event: plugins.changed (TOPIC_PLUGINS_CHANGED)
 TOPIC_PLUGINS_CHANGED = "plugins.changed"

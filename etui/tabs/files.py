@@ -17,10 +17,10 @@ from textual.screen import ModalScreen
 
 try:
     from ..bus import BusMixin
-    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME, SVC_FILES_COPY, SVC_FILES_MOVE
+    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME, SVC_FILES_COPY, SVC_FILES_MOVE, SVC_FILES_PERMISSIONS
 except ImportError:
     from etui.bus import BusMixin
-    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME, SVC_FILES_COPY, SVC_FILES_MOVE
+    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE, SVC_FILES_CREATE, SVC_FILES_RENAME, SVC_FILES_COPY, SVC_FILES_MOVE, SVC_FILES_PERMISSIONS
 
 _MD_SUFFIXES = {".md", ".markdown"}
 
@@ -292,6 +292,69 @@ class MoveModal(ModalScreen):
             self.dismiss(dest)
 
 
+class PermissionsModal(ModalScreen):
+    """Modal dialog for viewing and changing file/directory permissions (chmod)."""
+
+    DEFAULT_CSS = """
+    PermissionsModal { align: center middle; }
+    #perm-modal-box {
+        background: $surface;
+        padding: 1 2;
+        border: thick $accent;
+        width: 50;
+        height: auto;
+    }
+    #perm-modal-box Label { margin-bottom: 1; }
+    #perm-modal-box Input { margin-bottom: 1; }
+    #perm-modal-btns { height: 3; align: right middle; }
+    #perm-modal-btns Button { margin-left: 1; }
+    """
+
+    def __init__(self, path: Path) -> None:
+        super().__init__()
+        self._path = path
+        try:
+            self._current_mode = oct(os.stat(path).st_mode & 0o777)
+        except OSError:
+            self._current_mode = "0o644"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="perm-modal-box"):
+            yield Label(f"Permissions: {self._path.name}")
+            yield Label(f"Current: {self._current_mode}")
+            yield Input(value=self._current_mode, placeholder="e.g. 0o644 or 644", id="perm-input")
+            with Horizontal(id="perm-modal-btns"):
+                yield Button("Cancel", id="perm-cancel")
+                yield Button("Apply", id="perm-ok", variant="success")
+
+    def on_mount(self) -> None:
+        inp = self.query_one("#perm-input", Input)
+        inp.focus()
+        inp.action_cursor_line_end()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "perm-cancel":
+            self.dismiss(None)
+        elif event.button.id == "perm-ok":
+            self._submit()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()
+
+    def _submit(self) -> None:
+        raw = self.query_one("#perm-input", Input).value.strip()
+        try:
+            mode = int(raw, 8) if raw.startswith("0o") or (len(raw) <= 4 and all(c in "01234567" for c in raw)) else int(raw, 0)
+            if 0 <= mode <= 0o7777:
+                self.dismiss(mode)
+                return
+        except (ValueError, OverflowError):
+            pass
+        self.app.notify("Invalid permission value — use octal e.g. 644 or 0o644", severity="error")
+
+
 class LeftWidget(DirectoryTree):
     def __init__(self):
         super().__init__("./")
@@ -306,6 +369,7 @@ class FileViewer(Vertical):
             yield Button("Rename", id="btn-rename")
             yield Button("Copy", id="btn-copy")
             yield Button("Move", id="btn-move")
+            yield Button("Permissions", id="btn-permissions")
             yield Button("Delete", id="btn-delete", variant="error")
         with ScrollableContainer(id="file-scroll"):
             yield Static(id="file-display", expand=True)
@@ -393,6 +457,7 @@ class FilesTab(BusMixin, Vertical):
                 self.bus.provide(SVC_FILES_RENAME, self._svc_rename),
                 self.bus.provide(SVC_FILES_COPY, self._svc_copy),
                 self.bus.provide(SVC_FILES_MOVE, self._svc_move),
+                self.bus.provide(SVC_FILES_PERMISSIONS, self._svc_permissions),
             ]
 
     def on_unmount(self) -> None:
@@ -416,6 +481,9 @@ class FilesTab(BusMixin, Vertical):
 
     def _svc_move(self, src: str, dest: str) -> None:
         self.move_path(Path(src), Path(dest))
+
+    def _svc_permissions(self, path: str, mode: int) -> None:
+        self.set_permissions(Path(path), mode)
 
     def _apply_workspace_root(self, root: str) -> None:
         self.query_one("LeftWidget").path = Path(root)
@@ -449,6 +517,9 @@ class FilesTab(BusMixin, Vertical):
         elif event.button.id == "btn-move":
             if self.current_path:
                 self.run_worker(self._show_move_dialog(self.current_path))
+        elif event.button.id == "btn-permissions":
+            if self.current_path:
+                self.run_worker(self._show_permissions_dialog(self.current_path))
         elif event.button.id == "btn-delete":
             if self.current_path:
                 self.run_worker(self._confirm_and_delete(self.current_path))
@@ -623,6 +694,26 @@ class FilesTab(BusMixin, Vertical):
         self.app.notify(f"Moved to: {dest.name}")
         if dest.is_file():
             self.open_file(dest)
+
+    async def _show_permissions_dialog(self, path: Path) -> None:
+        mode = await self.app.push_screen_wait(PermissionsModal(path))
+        if mode is not None:
+            self.set_permissions(path, mode)
+
+    def set_permissions(self, path: Path, mode: int) -> None:
+        """Apply *mode* (octal int) to *path* via chmod and refresh the details view."""
+        path = path.expanduser().resolve()
+        if not path.exists():
+            self.app.notify(f"Path not found: {path.name}", severity="error")
+            return
+        try:
+            path.chmod(mode)
+        except OSError as exc:
+            self.app.notify(f"chmod failed: {exc}", severity="error")
+            return
+        self.app.notify(f"Permissions set to {oct(mode)}: {path.name}")
+        if self.current_path and self.current_path.resolve() == path and self.view_mode == "details":
+            self.render_file()
 
     async def _confirm_and_delete(self, path: Path) -> None:
         path = path.expanduser().resolve()
