@@ -9,7 +9,7 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.containers import Vertical, ScrollableContainer
-from textual.widgets import DirectoryTree, Button, Input, Label
+from textual.widgets import DirectoryTree, Button, Input, Label, Checkbox
 from textual.widgets import Static
 from rich.syntax import Syntax
 from textual.widgets import Markdown, MarkdownViewer
@@ -292,68 +292,6 @@ class MoveModal(ModalScreen):
             self.dismiss(dest)
 
 
-class PermissionsModal(ModalScreen):
-    """Modal dialog for viewing and changing file/directory permissions (chmod)."""
-
-    DEFAULT_CSS = """
-    PermissionsModal { align: center middle; }
-    #perm-modal-box {
-        background: $surface;
-        padding: 1 2;
-        border: thick $accent;
-        width: 50;
-        height: auto;
-    }
-    #perm-modal-box Label { margin-bottom: 1; }
-    #perm-modal-box Input { margin-bottom: 1; }
-    #perm-modal-btns { height: 3; align: right middle; }
-    #perm-modal-btns Button { margin-left: 1; }
-    """
-
-    def __init__(self, path: Path) -> None:
-        super().__init__()
-        self._path = path
-        try:
-            self._current_mode = oct(os.stat(path).st_mode & 0o777)
-        except OSError:
-            self._current_mode = "0o644"
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="perm-modal-box"):
-            yield Label(f"Permissions: {self._path.name}")
-            yield Label(f"Current: {self._current_mode}")
-            yield Input(value=self._current_mode, placeholder="e.g. 0o644 or 644", id="perm-input")
-            with Horizontal(id="perm-modal-btns"):
-                yield Button("Cancel", id="perm-cancel")
-                yield Button("Apply", id="perm-ok", variant="success")
-
-    def on_mount(self) -> None:
-        inp = self.query_one("#perm-input", Input)
-        inp.focus()
-        inp.cursor_position = len(inp.value)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        if event.button.id == "perm-cancel":
-            self.dismiss(None)
-        elif event.button.id == "perm-ok":
-            self._submit()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        self._submit()
-
-    def _submit(self) -> None:
-        raw = self.query_one("#perm-input", Input).value.strip()
-        try:
-            mode = int(raw, 8) if raw.startswith("0o") or (len(raw) <= 4 and all(c in "01234567" for c in raw)) else int(raw, 0)
-            if 0 <= mode <= 0o7777:
-                self.dismiss(mode)
-                return
-        except (ValueError, OverflowError):
-            pass
-        self.app.notify("Invalid permission value — use octal e.g. 644 or 0o644", severity="error")
-
 
 class LeftWidget(DirectoryTree):
     def __init__(self):
@@ -369,14 +307,35 @@ class FileViewer(Vertical):
             yield Button("Rename", id="btn-rename")
             yield Button("Copy", id="btn-copy")
             yield Button("Move", id="btn-move")
-            yield Button("Permissions", id="btn-permissions")
             yield Button("Delete", id="btn-delete", variant="error")
         with ScrollableContainer(id="file-scroll"):
             yield Static(id="file-display", expand=True)
+        with Vertical(id="perm-grid"):
+            with Horizontal(id="perm-header-row"):
+                yield Label("", id="perm-corner")
+                yield Label("Read", classes="perm-col-label")
+                yield Label("Write", classes="perm-col-label")
+                yield Label("Execute", classes="perm-col-label")
+            with Horizontal(classes="perm-row"):
+                yield Label("Owner", classes="perm-row-label")
+                yield Checkbox("", id="perm-owner-r")
+                yield Checkbox("", id="perm-owner-w")
+                yield Checkbox("", id="perm-owner-x")
+            with Horizontal(classes="perm-row"):
+                yield Label("Group", classes="perm-row-label")
+                yield Checkbox("", id="perm-group-r")
+                yield Checkbox("", id="perm-group-w")
+                yield Checkbox("", id="perm-group-x")
+            with Horizontal(classes="perm-row"):
+                yield Label("Others", classes="perm-row-label")
+                yield Checkbox("", id="perm-other-r")
+                yield Checkbox("", id="perm-other-w")
+                yield Checkbox("", id="perm-other-x")
         yield SafeMarkdownViewer(show_table_of_contents=False, id="md-viewer")
 
     def on_mount(self) -> None:
         self.query_one("#md-viewer", SafeMarkdownViewer).display = False
+        self.query_one("#perm-grid").display = False
 
 
 class FilesTab(BusMixin, Vertical):
@@ -430,12 +389,39 @@ class FilesTab(BusMixin, Vertical):
     FilesTab #md-viewer {
         height: 1fr;
     }
+    FilesTab #perm-grid {
+        height: auto;
+        border-top: solid $accent;
+        padding: 0 1;
+        background: $surface;
+    }
+    FilesTab #perm-header-row {
+        height: 1;
+    }
+    FilesTab .perm-row {
+        height: 3;
+    }
+    FilesTab #perm-corner {
+        width: 8;
+    }
+    FilesTab .perm-row-label {
+        width: 8;
+        margin-top: 1;
+    }
+    FilesTab .perm-col-label {
+        width: 12;
+        text-align: center;
+    }
+    FilesTab #perm-grid Checkbox {
+        width: 12;
+    }
     """
 
     def __init__(self):
         super().__init__()
         self.current_path = None
         self.view_mode = "content"
+        self._perm_loading = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="files-workspace-bar"):
@@ -517,14 +503,20 @@ class FilesTab(BusMixin, Vertical):
         elif event.button.id == "btn-move":
             if self.current_path:
                 self.run_worker(self._show_move_dialog(self.current_path))
-        elif event.button.id == "btn-permissions":
-            if self.current_path:
-                self.run_worker(self._show_permissions_dialog(self.current_path))
         elif event.button.id == "btn-delete":
             if self.current_path:
                 self.run_worker(self._confirm_and_delete(self.current_path))
         elif event.button.id == "btn-set-workspace-root":
             await self._action_set_workspace_root()
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if self._perm_loading or not self.current_path:
+            return
+        if not event.checkbox.id or not event.checkbox.id.startswith("perm-"):
+            return
+        event.stop()
+        mode = self._read_perm_grid()
+        self.set_permissions(self.current_path, mode)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "txt-workspace-root":
@@ -695,10 +687,42 @@ class FilesTab(BusMixin, Vertical):
         if dest.is_file():
             self.open_file(dest)
 
-    async def _show_permissions_dialog(self, path: Path) -> None:
-        mode = await self.app.push_screen_wait(PermissionsModal(path))
-        if mode is not None:
-            self.set_permissions(path, mode)
+    def _load_perm_grid(self, path: Path) -> None:
+        """Read current mode from *path* and sync all permission checkboxes."""
+        try:
+            mode = os.stat(path).st_mode & 0o777
+        except OSError:
+            return
+        self._perm_loading = True
+        try:
+            bits = {
+                "perm-owner-r": bool(mode & 0o400),
+                "perm-owner-w": bool(mode & 0o200),
+                "perm-owner-x": bool(mode & 0o100),
+                "perm-group-r": bool(mode & 0o040),
+                "perm-group-w": bool(mode & 0o020),
+                "perm-group-x": bool(mode & 0o010),
+                "perm-other-r": bool(mode & 0o004),
+                "perm-other-w": bool(mode & 0o002),
+                "perm-other-x": bool(mode & 0o001),
+            }
+            for cb_id, checked in bits.items():
+                self.query_one(f"#{cb_id}", Checkbox).value = checked
+        finally:
+            self._perm_loading = False
+
+    def _read_perm_grid(self) -> int:
+        """Build an octal mode int from the current state of the permission checkboxes."""
+        mapping = [
+            ("perm-owner-r", 0o400), ("perm-owner-w", 0o200), ("perm-owner-x", 0o100),
+            ("perm-group-r", 0o040), ("perm-group-w", 0o020), ("perm-group-x", 0o010),
+            ("perm-other-r", 0o004), ("perm-other-w", 0o002), ("perm-other-x", 0o001),
+        ]
+        mode = 0
+        for cb_id, bit in mapping:
+            if self.query_one(f"#{cb_id}", Checkbox).value:
+                mode |= bit
+        return mode
 
     def set_permissions(self, path: Path, mode: int) -> None:
         """Apply *mode* (octal int) to *path* via chmod and refresh the details view."""
@@ -713,7 +737,7 @@ class FilesTab(BusMixin, Vertical):
             return
         self.app.notify(f"Permissions set to {oct(mode)}: {path.name}")
         if self.current_path and self.current_path.resolve() == path and self.view_mode == "details":
-            self.render_file()
+            self.query_one("#file-display", Static).update(self.get_file_details(path))
 
     async def _confirm_and_delete(self, path: Path) -> None:
         path = path.expanduser().resolve()
@@ -767,8 +791,12 @@ class FilesTab(BusMixin, Vertical):
         if self.view_mode == "details":
             scroll.display = True
             md_viewer.display = False
+            self.query_one("#perm-grid").display = True
             display.update(self.get_file_details(self.current_path))
+            self._load_perm_grid(self.current_path)
             return
+
+        self.query_one("#perm-grid").display = False
 
         # Content mode — use Viewer for Markdown, Syntax for everything else.
         if self._is_markdown(self.current_path):
