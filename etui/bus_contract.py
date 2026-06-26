@@ -67,6 +67,8 @@ SVC_PLUGINS_RELOAD = "plugins.reload"
 SVC_SETTINGS_FOCUS_SECTION = "settings.focus_section"
 # files.select(path: str) -> None  (navigate the Files tab tree to path and open it)
 SVC_FILES_SELECT = "files.select"
+# files.delete(path: str) -> None  (delete a file or directory from disk)
+SVC_FILES_DELETE = "files.delete"
 
 # Event: plugins.changed (TOPIC_PLUGINS_CHANGED)
 TOPIC_PLUGINS_CHANGED = "plugins.changed"

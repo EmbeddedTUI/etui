@@ -4,6 +4,7 @@
 import os
 import datetime
 import mimetypes
+import shutil
 from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal
@@ -15,10 +16,10 @@ from textual.widgets import Markdown, MarkdownViewer
 
 try:
     from ..bus import BusMixin
-    from ..bus_contract import SVC_FILES_SELECT
+    from ..bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE
 except ImportError:
     from etui.bus import BusMixin
-    from etui.bus_contract import SVC_FILES_SELECT
+    from etui.bus_contract import SVC_FILES_SELECT, SVC_FILES_DELETE
 
 _MD_SUFFIXES = {".md", ".markdown"}
 
@@ -71,6 +72,7 @@ class FileViewer(Vertical):
         with Horizontal(id="viewer-controls"):
             yield Button("Content", id="btn-content", variant="primary")
             yield Button("Details", id="btn-details")
+            yield Button("Delete", id="btn-delete", variant="error")
         with ScrollableContainer(id="file-scroll"):
             yield Static(id="file-display", expand=True)
         yield SafeMarkdownViewer(show_table_of_contents=False, id="md-viewer")
@@ -150,7 +152,10 @@ class FilesTab(BusMixin, Vertical):
         if hasattr(self.app, "workspace_root") and self.app.workspace_root:
             self._apply_workspace_root(self.app.workspace_root)
         if self.bus is not None:
-            self._disposers = [self.bus.provide(SVC_FILES_SELECT, self._svc_select)]
+            self._disposers = [
+                self.bus.provide(SVC_FILES_SELECT, self._svc_select),
+                self.bus.provide(SVC_FILES_DELETE, self._svc_delete),
+            ]
 
     def on_unmount(self) -> None:
         for dispose in getattr(self, "_disposers", []):
@@ -158,6 +163,9 @@ class FilesTab(BusMixin, Vertical):
 
     def _svc_select(self, path: str) -> None:
         self.select_path(Path(path))
+
+    def _svc_delete(self, path: str) -> None:
+        self.run_worker(self._confirm_and_delete(Path(path)))
 
     def _apply_workspace_root(self, root: str) -> None:
         self.query_one("LeftWidget").path = Path(root)
@@ -180,6 +188,9 @@ class FilesTab(BusMixin, Vertical):
         elif event.button.id == "btn-details":
             self.view_mode = "details"
             self.render_file()
+        elif event.button.id == "btn-delete":
+            if self.current_path:
+                self.run_worker(self._confirm_and_delete(self.current_path))
         elif event.button.id == "btn-set-workspace-root":
             await self._action_set_workspace_root()
 
@@ -228,6 +239,39 @@ class FilesTab(BusMixin, Vertical):
             self._apply_workspace_root(str(path))
         else:
             self.app.notify(f"Path not found: {path}", severity="error")
+
+    async def _confirm_and_delete(self, path: Path) -> None:
+        path = path.expanduser().resolve()
+        if not path.exists():
+            self.app.notify(f"Path not found: {path}", severity="error")
+            return
+        kind = "directory" if path.is_dir() else "file"
+        confirmed = await self.app.confirm_action(f"Delete {kind} '{path.name}'?")
+        if confirmed:
+            self.delete_path(path)
+
+    def delete_path(self, path: Path) -> None:
+        """Delete *path* from disk (file or directory tree) and refresh the tree."""
+        path = path.expanduser().resolve()
+        if not path.exists():
+            self.app.notify(f"Path not found: {path}", severity="error")
+            return
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        except OSError as exc:
+            self.app.notify(f"Delete failed: {exc}", severity="error")
+            return
+        if self.current_path and self.current_path.resolve() == path:
+            self.current_path = None
+            self.query_one("#file-display", Static).update("")
+            self.query_one("#md-viewer", SafeMarkdownViewer).display = False
+            self.query_one("#file-scroll").display = True
+        tree = self.query_one("LeftWidget", DirectoryTree)
+        tree.reload()
+        self.app.notify(f"Deleted: {path.name}")
 
     def _is_markdown(self, path: Path) -> bool:
         return path.suffix.lower() in _MD_SUFFIXES
