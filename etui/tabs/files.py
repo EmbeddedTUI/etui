@@ -13,6 +13,13 @@ from textual.widgets import Static
 from rich.syntax import Syntax
 from textual.widgets import Markdown, MarkdownViewer
 
+try:
+    from ..bus import BusMixin
+    from ..bus_contract import SVC_FILES_SELECT
+except ImportError:
+    from etui.bus import BusMixin
+    from etui.bus_contract import SVC_FILES_SELECT
+
 _MD_SUFFIXES = {".md", ".markdown"}
 
 
@@ -72,7 +79,7 @@ class FileViewer(Vertical):
         self.query_one("#md-viewer", SafeMarkdownViewer).display = False
 
 
-class FilesTab(Vertical):
+class FilesTab(BusMixin, Vertical):
     """ Files tab"""
 
     DEFAULT_CSS = """
@@ -142,6 +149,15 @@ class FilesTab(Vertical):
     def on_mount(self) -> None:
         if hasattr(self.app, "workspace_root") and self.app.workspace_root:
             self._apply_workspace_root(self.app.workspace_root)
+        if self.bus is not None:
+            self._disposers = [self.bus.provide(SVC_FILES_SELECT, self._svc_select)]
+
+    def on_unmount(self) -> None:
+        for dispose in getattr(self, "_disposers", []):
+            dispose()
+
+    def _svc_select(self, path: str) -> None:
+        self.select_path(Path(path))
 
     def _apply_workspace_root(self, root: str) -> None:
         self.query_one("LeftWidget").path = Path(root)
@@ -197,6 +213,21 @@ class FilesTab(Vertical):
         self.current_path = path
         self.view_mode = "content"
         self.render_file()
+
+    def select_path(self, path: Path) -> None:
+        """Navigate the directory tree to *path* and open it in the viewer.
+
+        If *path* is a file, the tree root is set to its parent directory and the
+        file is displayed.  If *path* is a directory, the tree root is set to it.
+        """
+        path = path.expanduser().resolve()
+        if path.is_file():
+            self._apply_workspace_root(str(path.parent))
+            self.open_file(path)
+        elif path.is_dir():
+            self._apply_workspace_root(str(path))
+        else:
+            self.app.notify(f"Path not found: {path}", severity="error")
 
     def _is_markdown(self, path: Path) -> bool:
         return path.suffix.lower() in _MD_SUFFIXES

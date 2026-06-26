@@ -65,6 +65,8 @@ SVC_PLUGINS_SET_ORDER = "plugins.set_order"
 SVC_PLUGINS_RELOAD = "plugins.reload"
 # settings.focus_section(section: str) -> None
 SVC_SETTINGS_FOCUS_SECTION = "settings.focus_section"
+# files.select(path: str) -> None  (navigate the Files tab tree to path and open it)
+SVC_FILES_SELECT = "files.select"
 
 # Event: plugins.changed (TOPIC_PLUGINS_CHANGED)
 TOPIC_PLUGINS_CHANGED = "plugins.changed"
