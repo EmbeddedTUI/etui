@@ -4,11 +4,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_PYTHON="$SCRIPT_DIR/etui/venv/bin/python3"
+VENV_PYTHON="$SCRIPT_DIR/venv/bin/python3"
 
 if [[ ! -x "$VENV_PYTHON" ]]; then
     echo "ERROR: venv not found at $VENV_PYTHON" >&2
-    echo "Run 'pdm install' inside $SCRIPT_DIR/etui first." >&2
+    echo "Run 'pdm install' inside $SCRIPT_DIR first." >&2
     exit 1
 fi
 
