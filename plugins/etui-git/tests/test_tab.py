@@ -214,5 +214,97 @@ class GitTabWidgetTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(tab._operation_worker)
 
 
+class GitCloneTests(unittest.IsolatedAsyncioTestCase):
+    """Tests for the git clone integration."""
+
+    def _create_bare_remote(self, directory: Path) -> Path:
+        """Create a bare repo that can be cloned locally."""
+        remote = directory / "remote.git"
+        run_git(directory, "init", "--bare", "-q", str(remote))
+        # Seed it via a temp working copy
+        working = directory / "seed"
+        run_git(directory, "clone", "-q", str(remote), str(working))
+        run_git(working, "config", "user.email", "test@example.com")
+        run_git(working, "config", "user.name", "Test User")
+        (working / "hello.txt").write_text("hello\n", encoding="utf-8")
+        run_git(working, "add", "--", "hello.txt")
+        run_git(working, "commit", "-qm", "seed")
+        run_git(working, "push", "-q", "origin", "HEAD")
+        return remote
+
+    async def test_clone_creates_repo_and_auto_loads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            d = Path(directory)
+            remote = self._create_bare_remote(d)
+            dest = d / "cloned"
+
+            app = GitTestApp()
+            async with app.run_test() as pilot:
+                tab = app.query_one(GitTab)
+                worker = tab._start_operation(
+                    tab._clone_repo(str(remote), str(dest)),
+                    "git-clone-test",
+                )
+                self.assertIsNotNone(worker)
+                await worker.wait()
+                await pilot.pause()
+
+                self.assertFalse(tab.busy)
+                self.assertTrue(dest.is_dir())
+                self.assertTrue((dest / ".git").is_dir())
+                self.assertTrue((dest / "hello.txt").exists())
+                # Auto-load should have set repo_path
+                self.assertIsNotNone(tab.repo_path)
+
+    async def test_clone_bad_url_sets_busy_false(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dest = Path(directory) / "out"
+
+            app = GitTestApp()
+            async with app.run_test() as pilot:
+                tab = app.query_one(GitTab)
+                worker = tab._start_operation(
+                    tab._clone_repo("file:///no/such/repo.git", str(dest)),
+                    "git-clone-bad",
+                )
+                self.assertIsNotNone(worker)
+                await worker.wait()
+                await pilot.pause()
+
+                self.assertFalse(tab.busy)
+
+    async def test_clone_button_present_in_dom(self) -> None:
+        from textual.widgets import Button
+        app = GitTestApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            tab = app.query_one(GitTab)
+            btn = tab.query_one("#btn-git-clone", Button)
+            self.assertIsNotNone(btn)
+
+    async def test_clone_button_disabled_while_busy(self) -> None:
+        from textual.widgets import Button
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repo"
+            create_repository(repository)
+            run_git(repository, "config", "alias.pause", "!sleep 30")
+
+            app = GitTestApp()
+            async with app.run_test() as pilot:
+                tab = app.query_one(GitTab)
+                worker = tab.validate_and_load_repo(str(repository))
+                assert worker is not None
+                await worker.wait()
+
+                # Start a long operation to make tab busy
+                tab.run_git_command(["pause"])
+                await pilot.pause(0.1)
+
+                btn = tab.query_one("#btn-git-clone", Button)
+                self.assertTrue(btn.disabled)
+
+                await tab.cancel_active_operation()
+
+
 if __name__ == "__main__":
     unittest.main()
