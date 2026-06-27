@@ -12,6 +12,7 @@ from pathlib import Path
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
 from textual.worker import Worker, WorkerCancelled
 from textual.widgets import Button, Input, Label, RichLog, Tree
 from textual.css.query import NoMatches
@@ -19,6 +20,59 @@ from textual.css.query import NoMatches
 from etui.plugin import CancelOnLeaveMixin, BusMixin, ToolWarningBanner
 from etui.bus_contract import TOPIC_REPO_CHANGED, RepoChanged, WorkspaceChanged
 from etui.contracts import on_workspace_changed, workspace_get_root
+
+
+class CloneModal(ModalScreen):
+    """Collect a remote URL and a local destination directory for git clone."""
+
+    DEFAULT_CSS = """
+    CloneModal { align: center middle; }
+    #clone-box {
+        background: $surface;
+        border: thick $accent;
+        padding: 1 2;
+        width: 70;
+        height: auto;
+    }
+    #clone-box Label { margin-bottom: 1; }
+    #clone-box Input { margin-bottom: 1; }
+    #clone-btns { height: 3; align: right middle; }
+    #clone-btns Button { margin-left: 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="clone-box"):
+            yield Label("Clone remote repository")
+            yield Input(placeholder="Repository URL  (https:// or git@…)", id="clone-url")
+            yield Input(placeholder="Destination directory (leave blank to clone into workspace root)", id="clone-dest")
+            with Horizontal(id="clone-btns"):
+                yield Button("Cancel", id="clone-cancel")
+                yield Button("Clone", id="clone-ok", variant="success")
+
+    def on_mount(self) -> None:
+        self.query_one("#clone-url", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "clone-cancel":
+            self.dismiss(None)
+        elif event.button.id == "clone-ok":
+            self._submit()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        if event.input.id == "clone-url":
+            self.query_one("#clone-dest", Input).focus()
+        else:
+            self._submit()
+
+    def _submit(self) -> None:
+        url  = self.query_one("#clone-url",  Input).value.strip()
+        dest = self.query_one("#clone-dest", Input).value.strip()
+        if url:
+            self.dismiss((url, dest))
+        else:
+            self.app.notify("A repository URL is required.", severity="error")
 
 
 @dataclass(frozen=True)
@@ -105,6 +159,7 @@ class GitTab(CancelOnLeaveMixin, BusMixin, Vertical):
                 id="txt-repo-path",
             )
             yield Button("Open", id="btn-open-repo")
+            yield Button("Clone…", id="btn-git-clone")
 
         with Horizontal(id="git-info-bar"):
             yield Label(
@@ -671,12 +726,64 @@ class GitTab(CancelOnLeaveMixin, BusMixin, Vertical):
         log.write(Text("Git operation succeeded.", style="bold green"))
         await self._load_repo_status()
 
+    async def _prompt_and_clone(self) -> None:
+        result = await self.app.push_screen_wait(CloneModal())
+        if result is None:
+            return
+        url, dest = result
+        if not dest:
+            try:
+                root = await workspace_get_root(self.bus) if self.bus else ""
+            except Exception:
+                root = ""
+            dest = root or str(Path.home())
+        self._start_operation(self._clone_repo(url, dest), "git-clone")
+
+    async def _clone_repo(self, url: str, dest: str) -> None:
+        dest_path = Path(dest).expanduser().resolve()
+        try:
+            log = self.query_one("#git-diff-viewer", RichLog)
+        except NoMatches:
+            return
+        log.clear()
+        log.write(Text(f"Cloning {url}", style="bold cyan"))
+        log.write(Text(f"Into    {dest_path}", style="bold cyan"))
+
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        env["GCM_INTERACTIVE"] = "Never"
+        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+
+        returncode, stdout, stderr = await self._capture_git(
+            ["clone", "--progress", url, str(dest_path)],
+            env=env,
+            timeout=30 * 60,
+            cwd=dest_path.parent if dest_path.parent.is_dir() else Path.home(),
+        )
+        output = stdout.decode(errors="replace")
+        error  = stderr.decode(errors="replace")
+        if output:
+            log.write(Text(output.rstrip()))
+        if error:
+            # git clone sends progress to stderr even on success
+            style = "red" if returncode != 0 else "dim"
+            log.write(Text(error.rstrip(), style=style))
+        if returncode != 0:
+            raise OSError(f"git clone exited with status {returncode}")
+
+        log.write(Text("Clone complete.", style="bold green"))
+        # Find the actual repo root (git may append a directory under dest_path)
+        cloned = dest_path if (dest_path / ".git").is_dir() else dest_path
+        self.query_one("#txt-repo-path", Input).value = str(cloned)
+        await self._validate_and_load_repo(str(cloned))
+
     def _set_controls_enabled(self, enabled: bool) -> None:
         if not self.is_mounted:
             return
         from textual.css.query import NoMatches
         try:
             self.query_one("#btn-open-repo", Button).disabled = self.busy
+            self.query_one("#btn-git-clone", Button).disabled = self.busy
             self.query_one("#txt-repo-path", Input).disabled = self.busy
             self.query_one("#git-changes-tree", Tree).disabled = self.busy
             self.query_one("#btn-git-add-all", Button).disabled = not enabled
@@ -710,6 +817,8 @@ class GitTab(CancelOnLeaveMixin, BusMixin, Vertical):
             path = self.query_one("#txt-repo-path", Input).value.strip()
             if path:
                 self.validate_and_load_repo(path)
+        elif button_id == "btn-git-clone":
+            self.run_worker(self._prompt_and_clone())
         elif button_id == "btn-git-toggle-stage":
             change = self._selected_change
             if change is not None:
